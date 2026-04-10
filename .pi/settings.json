@@ -1,3 +1,6 @@
 {
-  "extensions": ["../extensions"]
+  "extensions": [
+    "../extensions",
+    "+../extensions/subagent/index.ts"
+  ]
 }
