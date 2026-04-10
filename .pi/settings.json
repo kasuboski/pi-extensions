@@ -1,6 +1,9 @@
 {
+  "packages": [
+    "!git:github.com/kasuboski/pi-extensions"
+  ],
   "extensions": [
-    "../extensions",
-    "+../extensions/subagent/index.ts"
+    "!**/pi-extensions/extensions/**",
+    "../extensions"
   ]
 }
