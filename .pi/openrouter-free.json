@@ -1,0 +1,25 @@
+{
+  "models": {
+    "explore": {
+      "description": "Free models for general exploration",
+      "order": [
+        "nvidia/nemotron-3-nano-30b-a3b:free",
+        "openai/gpt-oss-20b:free",
+        "google/gemma-4-26b-a4b-it:free",
+        "google/gemma-4-31b-it:free",
+        "nvidia/nemotron-3-super-120b-a12b:free",
+        "qwen/qwen3-next-80b-a3b-instruct:free",
+        "openai/gpt-oss-120b:free"
+      ]
+    },
+    "code": {
+      "description": "Free coding-focused models",
+      "order": [
+        "qwen/qwen3-coder:free",
+        "openai/gpt-oss-120b:free",
+        "google/gemma-4-31b-it:free",
+        "nvidia/nemotron-3-super-120b-a12b:free"
+      ]
+    }
+  }
+}

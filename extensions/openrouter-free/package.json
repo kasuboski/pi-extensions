@@ -1,0 +1,6 @@
+{
+  "name": "openrouter-free",
+  "version": "1.0.0",
+  "private": true,
+  "description": "OpenRouter free model provider with configurable meta-model fallback"
+}
