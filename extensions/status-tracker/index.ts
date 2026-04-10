@@ -249,11 +249,20 @@ export default function (pi: ExtensionAPI) {
   });
 
   // ── agent_end: verify STATUS.md was updated; remind if not ─────────────────
-  pi.on("agent_end", async (_event, ctx) => {
+  pi.on("agent_end", async (event, ctx) => {
     // Never chain reminders back-to-back
     if (justReminded) {
       justReminded = false;
       return;
+    }
+
+    // Check if the agent was aborted (user cancelled)
+    const wasAborted = event.messages.some(
+      (msg) => msg.role === "assistant" && (msg as { stopReason?: string }).stopReason === "aborted",
+    );
+
+    if (wasAborted) {
+      console.log("[status-tracker] Agent was aborted — skipping reminder");
     }
 
     const mtimeAfter = await getMtime(ctx.cwd);
@@ -264,6 +273,12 @@ export default function (pi: ExtensionAPI) {
       ctx.ui.setStatus("status-tracker", buildStatusLine(content, ctx.ui.theme));
     }
     ctx.ui.setTitle(buildTitle(content));
+
+    // Skip the reminder if the agent was aborted
+    if (wasAborted) {
+      mtimeBeforeAgent = null;
+      return;
+    }
 
     const wasUpdated =
       mtimeAfter !== null &&

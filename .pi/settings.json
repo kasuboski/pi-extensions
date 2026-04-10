@@ -1,9 +1,0 @@
-{
-  "packages": [
-    "!git:github.com/kasuboski/pi-extensions"
-  ],
-  "extensions": [
-    "!**/pi-extensions/extensions/**",
-    "../extensions"
-  ]
-}
