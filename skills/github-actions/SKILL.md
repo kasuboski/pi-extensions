@@ -3,8 +3,29 @@ name: github-actions
 description: Guidance for using github actions. Use when writing github actions and workflows.
 ---
 
-IMPORTANT: Always look up current versions of actions to include. Official `actions/` versions can be found at https://simonw.github.io/actions-latest/versions.txt
-You MUST NOT use action versions that don't exist. Confirm existence and version before using.
+IMPORTANT: Always look up current versions of actions before using them. You MUST NOT use action versions that don't exist.
+
+Use the version lookup script to find the latest version and commit SHA for any action:
+
+```bash
+# Latest version + SHA for any action
+scripts/action-versions <owner/repo>
+
+# Specific tag
+scripts/action-versions <owner/repo> --tag v4
+scripts/action-versions <owner/repo>@v4
+
+# All versions
+scripts/action-versions <owner/repo> --all
+```
+
+Pin actions to the commit SHA with a version comment so Supply-chain attacks on the tag are mitigated:
+
+```yaml
+- uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+```
+
+For official `actions/` actions, you can also cross-check at https://simonw.github.io/actions-latest/versions.txt
 
 Prefer native builds to cross compiling. Github provides x86 and arm runners. It is better to run a build natively on a runner without emulation. Check references/runners.md for available runners.
 
@@ -25,7 +46,7 @@ concurrency:
 `actions/checkout` persists auth credentials in `.git/config` by default, allowing any subsequent step to push to the repo. Always set `persist-credentials: false` unless a later step explicitly needs to push:
 
 ```yaml
-- uses: actions/checkout@v6
+- uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
   with:
     persist-credentials: false
 ```
