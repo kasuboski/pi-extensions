@@ -9,6 +9,7 @@
   },
   "pi": {
     "extensions": ["./extensions"],
+    "skills": ["./skills"],
     "themes": ["node_modules/pi-coding-agent-catppuccin"]
   }
 }
