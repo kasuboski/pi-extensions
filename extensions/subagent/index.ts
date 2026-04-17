@@ -22,7 +22,7 @@ import { StringEnum } from "@mariozechner/pi-ai";
 import { type ExtensionAPI, getMarkdownTheme, withFileMutationQueue } from "@mariozechner/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
-import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
+import { type AgentConfig, type AgentDiscoveryResult, type AgentScope, discoverAgents } from "./agents.js";
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
@@ -427,7 +427,20 @@ const SubagentParams = Type.Object({
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
 });
 
+let cachedDiscovery: AgentDiscoveryResult | null = null;
+
 export default function (pi: ExtensionAPI) {
+	pi.on("before_agent_start", async (_event, ctx) => {
+		if (!cachedDiscovery) {
+			cachedDiscovery = discoverAgents(ctx.cwd, "both");
+		}
+		if (cachedDiscovery.agents.length === 0) return;
+		const lines = cachedDiscovery.agents.map((a) => `- ${a.name} (${a.source}): ${a.description}`).join("\n");
+		return {
+			systemPrompt: `Available subagents (use the subagent tool to invoke):\n${lines}`,
+		};
+	});
+
 	pi.registerTool({
 		name: "subagent",
 		label: "Subagent",
