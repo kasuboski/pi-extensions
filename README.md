@@ -8,8 +8,7 @@ Install dependencies:
 
 ```bash
 npm install
-cd extensions/status-tracker && npm install
-cd extensions/subagent && npm install
+scripts/install-extensions
 ```
 
 ## Development
