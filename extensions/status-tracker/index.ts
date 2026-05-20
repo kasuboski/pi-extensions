@@ -292,7 +292,7 @@ export default function (pi: ExtensionAPI) {
           "Please update it now to accurately reflect the current goal, " +
           "step progress (check off anything completed), current unknowns, " +
           "and any newly discovered issues.",
-        { deliverAs: "followUp" },
+        { deliverAs: "steer" },
       );
     }
 
