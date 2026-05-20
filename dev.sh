@@ -86,4 +86,4 @@ done
 
 echo "Loading extensions: ${ext_names[*]}"
 echo "Loading skills: ${skill_names[*]}"
-exec bunx --bun @mariozechner/pi-coding-agent --no-extensions --no-skills "${ext_args[@]}" "${skill_args[@]}" "${extra_args[@]}"
+exec bunx --bun @earendil-works/pi-coding-agent --no-extensions --no-skills "${ext_args[@]}" "${skill_args[@]}" "${extra_args[@]}"
