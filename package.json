@@ -3,13 +3,21 @@
   "version": "1.0.0",
   "private": true,
   "description": "Personal pi extensions and themes monorepo",
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
   "dependencies": {
     "pi-coding-agent-catppuccin": "github:otahontas/pi-coding-agent-catppuccin"
   },
   "pi": {
-    "extensions": ["./extensions"],
-    "skills": ["./skills"],
-    "themes": ["node_modules/pi-coding-agent-catppuccin"]
+    "extensions": [
+      "./extensions"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "themes": [
+      "node_modules/pi-coding-agent-catppuccin"
+    ]
   }
 }
