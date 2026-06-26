@@ -206,6 +206,12 @@ function buildTitle(content: string | null): string {
 // ─── extension ────────────────────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
+  // Subagents get PI_SUBAGENT=1 in their env. Disable status tracking entirely
+  // to prevent conflicts with the parent's STATUS.md and UI widgets.
+  if (process.env.PI_SUBAGENT === "1") {
+    return;
+  }
+
   // mtime of STATUS.md captured just before each agent turn
   let mtimeBeforeAgent: number | null = null;
 
