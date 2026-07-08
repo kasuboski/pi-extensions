@@ -11,6 +11,7 @@ Spawn a subagent with an isolated context window. The subagent works autonomousl
 - **Usage tracking**: Shows turns, tokens, cost, and context usage
 - **Abort support**: Ctrl+C propagates to kill the agent process
 - **Subagent-aware**: Sets `PI_SUBAGENT=1` so extensions like status-tracker deactivate
+- **Herdr-aware**: When `HERDR_ENV=1`, starts each agent in its own herdr tab instead of a hidden subprocess
 
 ## Usage
 
@@ -49,6 +50,12 @@ if (process.env.PI_SUBAGENT === "1") {
 ```
 
 This is used by `status-tracker` to avoid conflicts with the parent's `STATUS.md`.
+
+## Herdr Integration
+
+When running inside herdr (`HERDR_ENV=1`), the tool keeps the same API and result UI, but launches each child `pi` process in a temporary new tab in the current workspace. Focus stays on the parent pane. The child runs in normal interactive pi mode, so the tab shows the native readable TUI instead of raw JSON. The parent reconstructs the structured agent result from the child session JSONL file. After the child reaches a final assistant message, the parent sends `/quit` to the tab, captures the result, and closes the tab after successful completion. If the agent exits non-zero or reports an LLM error, the tab is renamed with a `failed` suffix and left open for inspection along with the temporary session files. Aborting the tool closes the tab.
+
+Outside herdr, behavior is unchanged: the agent runs as a normal hidden subprocess.
 
 ## Error Handling
 

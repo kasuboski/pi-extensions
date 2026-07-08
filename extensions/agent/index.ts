@@ -235,6 +235,39 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 
 // ─── agent execution ──────────────────────────────────────────────────────────
 
+function shellQuote(value: string): string {
+  return `'${value.replace(/'/g, `'"'"'`)}'`;
+}
+
+async function spawnAndCapture(
+  command: string,
+  args: string[],
+  options: { cwd?: string; env?: Record<string, string | undefined> } = {},
+): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  return await new Promise((resolve) => {
+    const proc = spawn(command, args, {
+      cwd: options.cwd,
+      env: options.env,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    proc.stdout.on("data", (data) => {
+      stdout += data.toString();
+    });
+    proc.stderr.on("data", (data) => {
+      stderr += data.toString();
+    });
+    proc.on("close", (code) =>
+      resolve({ exitCode: code ?? 0, stdout, stderr }),
+    );
+    proc.on("error", (error) =>
+      resolve({ exitCode: 1, stdout, stderr: String(error) }),
+    );
+  });
+}
+
 async function runAgent(
   defaultCwd: string,
   params: {
@@ -307,86 +340,378 @@ async function runAgent(
     args.push(params.prompt);
 
     let wasAborted = false;
+    let buffer = "";
 
-    const exitCode = await new Promise<number>((resolve) => {
-      const invocation = getPiInvocation(args);
-      const proc = spawn(invocation.command, invocation.args, {
-        cwd: params.cwd ?? defaultCwd,
-        env: { ...process.env, PI_SUBAGENT: "1" },
-        shell: false,
-        stdio: ["ignore", "pipe", "pipe"],
-      });
-      let buffer = "";
+    let readyToQuitInteractive = false;
 
-      const processLine = (line: string) => {
-        if (!line.trim()) return;
-        let event: any;
-        try {
-          event = JSON.parse(line);
-        } catch {
-          return;
+    const recordMessage = (msg: Message) => {
+      result.messages.push(msg);
+
+      if (msg.role === "assistant") {
+        result.usage.turns++;
+        const usage = msg.usage;
+        if (usage) {
+          result.usage.input += usage.input || 0;
+          result.usage.output += usage.output || 0;
+          result.usage.cacheRead += usage.cacheRead || 0;
+          result.usage.cacheWrite += usage.cacheWrite || 0;
+          result.usage.cost += usage.cost?.total || 0;
+          result.usage.contextTokens = usage.totalTokens || 0;
         }
+        if (!result.model && msg.model) result.model = msg.model;
+        if (msg.stopReason) result.stopReason = msg.stopReason;
+        if (msg.errorMessage) result.errorMessage = msg.errorMessage;
+        if (msg.stopReason && msg.stopReason !== "toolUse") {
+          readyToQuitInteractive = true;
+        }
+      }
+      emitUpdate();
+    };
 
-        if (event.type === "message_end" && event.message) {
-          const msg = event.message as Message;
-          result.messages.push(msg);
+    const processLine = (line: string) => {
+      if (!line.trim()) return;
+      let event: any;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        return;
+      }
 
-          if (msg.role === "assistant") {
-            result.usage.turns++;
-            const usage = msg.usage;
-            if (usage) {
-              result.usage.input += usage.input || 0;
-              result.usage.output += usage.output || 0;
-              result.usage.cacheRead += usage.cacheRead || 0;
-              result.usage.cacheWrite += usage.cacheWrite || 0;
-              result.usage.cost += usage.cost?.total || 0;
-              result.usage.contextTokens = usage.totalTokens || 0;
-            }
-            if (!result.model && msg.model) result.model = msg.model;
-            if (msg.stopReason) result.stopReason = msg.stopReason;
-            if (msg.errorMessage) result.errorMessage = msg.errorMessage;
+      if (event.type === "message_end" && event.message) {
+        recordMessage(event.message as Message);
+      }
+
+      if (event.type === "tool_result_end" && event.message) {
+        recordMessage(event.message as Message);
+      }
+    };
+
+    const processChunk = (chunk: string) => {
+      buffer += chunk;
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) processLine(line);
+    };
+
+    const flushBuffer = () => {
+      if (buffer.trim()) processLine(buffer);
+      buffer = "";
+    };
+
+    const invocation = getPiInvocation(args);
+    const cwd = params.cwd ?? defaultCwd;
+
+    const runNative = async (): Promise<number> => {
+      return await new Promise<number>((resolve) => {
+        const proc = spawn(invocation.command, invocation.args, {
+          cwd,
+          env: { ...process.env, PI_SUBAGENT: "1" },
+          shell: false,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let abortHandler: (() => void) | undefined;
+        const finish = (code: number) => {
+          if (signal && abortHandler) {
+            signal.removeEventListener("abort", abortHandler);
           }
-          emitUpdate();
-        }
+          resolve(code);
+        };
 
-        if (event.type === "tool_result_end" && event.message) {
-          result.messages.push(event.message as Message);
-          emitUpdate();
+        proc.stdout.on("data", (data) => processChunk(data.toString()));
+
+        proc.stderr.on("data", (data) => {
+          result.stderr += data.toString();
+        });
+
+        proc.on("close", (code) => {
+          flushBuffer();
+          finish(code ?? 0);
+        });
+
+        proc.on("error", () => {
+          finish(1);
+        });
+
+        if (signal) {
+          abortHandler = () => {
+            wasAborted = true;
+            proc.kill("SIGTERM");
+            setTimeout(() => {
+              if (!proc.killed) proc.kill("SIGKILL");
+            }, 5000);
+          };
+          if (signal.aborted) abortHandler();
+          else signal.addEventListener("abort", abortHandler, { once: true });
+        }
+      });
+    };
+
+    const findHerdrWorkspaceId = async (): Promise<string | undefined> => {
+      if (process.env.HERDR_WORKSPACE_ID) return process.env.HERDR_WORKSPACE_ID;
+      const currentPaneId = process.env.HERDR_PANE_ID;
+      const panes = await spawnAndCapture("herdr", ["pane", "list"], {
+        env: process.env,
+      });
+      if (panes.exitCode !== 0) return undefined;
+      try {
+        const payload = JSON.parse(panes.stdout);
+        const paneList = payload?.result?.panes ?? [];
+        const current = currentPaneId
+          ? paneList.find((pane: any) => pane.pane_id === currentPaneId)
+          : undefined;
+        if (current?.workspace_id) return current.workspace_id;
+        const focused = paneList.find((pane: any) => pane.focused);
+        return focused?.workspace_id;
+      } catch {
+        return undefined;
+      }
+    };
+
+    const parseExitCode = (text: string): number => {
+      const trimmed = text.trim();
+      if (!/^-?\d+$/.test(trimmed)) return 1;
+      const parsed = Number.parseInt(trimmed, 10);
+      return Number.isFinite(parsed) ? parsed : 1;
+    };
+
+    const runHerdr = async (): Promise<number> => {
+      const runDir = await fs.promises.mkdtemp(
+        path.join(os.tmpdir(), "pi-herdr-agent-"),
+      );
+      const stderrPath = path.join(runDir, "stderr.log");
+      const exitPath = path.join(runDir, "exit-code");
+      const runScriptPath = path.join(runDir, "run-agent.sh");
+      const sessionId = `agent-${Date.now().toString(36)}-${Math.random()
+        .toString(36)
+        .slice(2, 10)}`;
+      let tabId: string | undefined;
+      let paneId: string | undefined;
+      let sessionPath: string | undefined;
+      let sessionReadOffset = 0;
+      let sessionBuffer = "";
+      let quitSent = false;
+      let abortHandler: (() => void) | undefined;
+
+      const cleanupRunDir = async () => {
+        try {
+          await fs.promises.rm(runDir, { recursive: true, force: true });
+        } catch {
+          // ignore cleanup errors
         }
       };
 
-      proc.stdout.on("data", (data) => {
-        buffer += data.toString();
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || "";
-        for (const line of lines) processLine(line);
+      const fallbackNative = async (): Promise<number> => {
+        await cleanupRunDir();
+        return await runNative();
+      };
+
+      const findSessionPath = async (): Promise<string | undefined> => {
+        if (sessionPath) return sessionPath;
+        try {
+          const files = await fs.promises.readdir(runDir);
+          const match = files.find((file) =>
+            file.endsWith(`_${sessionId}.jsonl`),
+          );
+          if (!match) return undefined;
+          sessionPath = path.join(runDir, match);
+          return sessionPath;
+        } catch {
+          return undefined;
+        }
+      };
+
+      const processSessionChunk = (chunk: string, flush = false) => {
+        sessionBuffer += chunk;
+        const lines = sessionBuffer.split("\n");
+        sessionBuffer = flush ? "" : lines.pop() || "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          let event: any;
+          try {
+            event = JSON.parse(line);
+          } catch {
+            continue;
+          }
+          if (event.type === "message" && event.message) {
+            const msg = event.message as Message;
+            if (msg.role === "assistant" || msg.role === "toolResult") {
+              recordMessage(msg);
+            }
+          }
+        }
+      };
+
+      const pollSession = async () => {
+        const file = await findSessionPath();
+        if (!file) return;
+        let sessionText = "";
+        try {
+          sessionText = await fs.promises.readFile(file, "utf8");
+        } catch {
+          return;
+        }
+        if (sessionText.length > sessionReadOffset) {
+          processSessionChunk(sessionText.slice(sessionReadOffset));
+          sessionReadOffset = sessionText.length;
+        }
+      };
+
+      const quoteArgs = (command: string, args: string[]) =>
+        [command, ...args].map(shellQuote).join(" ");
+
+      const interactiveArgs = [
+        "--session-dir",
+        runDir,
+        "--session-id",
+        sessionId,
+        ...args.slice(4),
+      ];
+      const herdrInvocation = getPiInvocation(interactiveArgs);
+      const commandLine = quoteArgs(
+        herdrInvocation.command,
+        herdrInvocation.args,
+      );
+      const script = `#!/usr/bin/env bash
+set +e
+cd ${shellQuote(cwd)} || exit 1
+export PI_SUBAGENT=1
+${commandLine} 2>> ${shellQuote(stderrPath)}
+code=$?
+printf '%s' "$code" > ${shellQuote(exitPath)}
+echo "Agent process exited with code $code."
+`;
+      await fs.promises.writeFile(runScriptPath, script, {
+        encoding: "utf8",
+        mode: 0o700,
       });
 
-      proc.stderr.on("data", (data) => {
-        result.stderr += data.toString();
-      });
+      const name = `agent ${Date.now().toString(36)}-${Math.random()
+        .toString(36)
+        .slice(2, 7)}`;
+      const createTabArgs = [
+        "tab",
+        "create",
+        "--cwd",
+        cwd,
+        "--label",
+        name,
+        "--no-focus",
+        "--env",
+        "PI_SUBAGENT=1",
+      ];
+      const workspaceId = await findHerdrWorkspaceId();
+      if (workspaceId) createTabArgs.push("--workspace", workspaceId);
 
-      proc.on("close", (code) => {
-        if (buffer.trim()) processLine(buffer);
-        resolve(code ?? 0);
+      const created = await spawnAndCapture("herdr", createTabArgs, {
+        env: process.env,
       });
-
-      proc.on("error", () => {
-        resolve(1);
-      });
-
-      if (signal) {
-        const killProc = () => {
-          wasAborted = true;
-          proc.kill("SIGTERM");
-          setTimeout(() => {
-            if (!proc.killed) proc.kill("SIGKILL");
-          }, 5000);
-        };
-        if (signal.aborted) killProc();
-        else signal.addEventListener("abort", killProc, { once: true });
+      if (created.exitCode !== 0) {
+        result.stderr += created.stderr || created.stdout;
+        return await fallbackNative();
       }
-    });
+
+      try {
+        const payload = JSON.parse(created.stdout);
+        tabId = payload?.result?.tab?.tab_id;
+        paneId = payload?.result?.root_pane?.pane_id;
+      } catch {
+        result.stderr += created.stdout;
+        return await fallbackNative();
+      }
+      if (!paneId) {
+        result.stderr += created.stdout;
+        if (tabId) await spawnAndCapture("herdr", ["tab", "close", tabId]);
+        return await fallbackNative();
+      }
+
+      const started = await spawnAndCapture(
+        "herdr",
+        ["pane", "run", paneId, `bash ${shellQuote(runScriptPath)}`],
+        { env: process.env },
+      );
+      if (started.exitCode !== 0) {
+        result.stderr += started.stderr || started.stdout;
+        if (tabId) await spawnAndCapture("herdr", ["tab", "close", tabId]);
+        return await fallbackNative();
+      }
+
+      const abort = async () => {
+        wasAborted = true;
+        if (tabId) await spawnAndCapture("herdr", ["tab", "close", tabId]);
+        else if (paneId)
+          await spawnAndCapture("herdr", ["pane", "close", paneId]);
+        await cleanupRunDir();
+      };
+      if (signal) {
+        if (signal.aborted) await abort();
+        else {
+          abortHandler = () => void abort();
+          signal.addEventListener("abort", abortHandler, { once: true });
+        }
+      }
+
+      try {
+        while (true) {
+          if (wasAborted) return 1;
+          await pollSession();
+
+          if (readyToQuitInteractive && paneId && !quitSent) {
+            quitSent = true;
+            await spawnAndCapture("herdr", [
+              "pane",
+              "send-text",
+              paneId,
+              "/quit",
+            ]);
+            await spawnAndCapture("herdr", [
+              "pane",
+              "send-keys",
+              paneId,
+              "Enter",
+            ]);
+          }
+
+          try {
+            const exitText = await fs.promises.readFile(exitPath, "utf8");
+            await pollSession();
+            if (sessionBuffer.trim()) processSessionChunk("", true);
+            try {
+              result.stderr += await fs.promises.readFile(stderrPath, "utf8");
+            } catch {
+              // ignore missing stderr
+            }
+            const exitCode = parseExitCode(exitText);
+            const keepTabOpen =
+              exitCode !== 0 ||
+              result.stopReason === "error" ||
+              Boolean(result.errorMessage);
+            if (tabId && keepTabOpen) {
+              await spawnAndCapture("herdr", [
+                "tab",
+                "rename",
+                tabId,
+                `${name} failed`,
+              ]);
+              result.stderr += `\nHerdr agent tab left open for inspection: ${tabId}\n`;
+              result.stderr += `Herdr agent files left at: ${runDir}\n`;
+            } else if (tabId) {
+              await spawnAndCapture("herdr", ["tab", "close", tabId]);
+            }
+            if (!keepTabOpen) await cleanupRunDir();
+            return exitCode;
+          } catch {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+          }
+        }
+      } finally {
+        if (signal && abortHandler) {
+          signal.removeEventListener("abort", abortHandler);
+        }
+      }
+    };
+
+    const exitCode =
+      process.env.HERDR_ENV === "1" ? await runHerdr() : await runNative();
 
     result.exitCode = exitCode;
     if (wasAborted) throw new Error("Agent was aborted");
