@@ -30,7 +30,7 @@ extensions/
 Three Morph integrations, all reusing a single `MORPH_API_KEY`:
 
 - **`codebase_search` tool** — agentic natural-language code search via [Morph WarpGrep](https://docs.morphllm.com/sdk/components/warp-grep/index). Spins up a sub-agent that runs ripgrep + file reads in its own context window, so exploration doesn't pollute the parent agent's context. Input is plain English, not regex.
-- **`/fast-compact [query]` command** — custom compaction via the [Morph Compact API](https://docs.morphllm.com/compact) instead of pi's built-in LLM summarization. Only activates when `/fast-compact` is used; the built-in `/compact` is unaffected. Falls back to built-in summarization if no key is set.
+- **`/fast-compact [query]` command** — custom compaction via the [Morph Compact API](https://docs.morphllm.com/compact) instead of pi's built-in LLM summarization. Only activates when `/fast-compact` is used; the built-in `/compact` is unaffected. Refuses to run when no key is set (falls back to built-in summarization only if a configured Morph request fails at runtime).
 - **`/fast-apply [on|off|status]` command** — toggle [Morph Fast Apply](https://docs.morphllm.com/fast-apply) edit mode (off by default). When on, the built-in `edit` tool is deactivated and Morph's semantic `edit_file` tool is activated in its place; the model emits only changed lines (using `// ... existing code ...` markers) and Morph merges them server-side. Refuses to enable without a key.
 
 ### Setup

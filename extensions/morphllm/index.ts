@@ -304,9 +304,13 @@ export default function (pi: ExtensionAPI) {
 
 	// Fast Apply toggle state. The edit_file tool is registered lazily on first
 	// enable (registerTool auto-activates a new tool, so we cannot register it at
-	// load time without breaking the default-off behavior).
+	// load time without breaking the default-off behavior). `editWasActive`
+	// records whether the built-in `edit` tool was active before we replaced it,
+	// so disabling restores the original activation state instead of always
+	// forcing `edit` back on.
 	let fastApplyEnabled = false;
 	let fastApplyRegistered = false;
+	let editWasActive: boolean | null = null;
 
 	// ── Hook into compaction: use Morph API only when /fast-compact triggers it ─
 	pi.on("session_before_compact", async (event: SessionBeforeCompactEvent) => {
@@ -569,14 +573,6 @@ export default function (pi: ExtensionAPI) {
 			"Toggle Morph Fast Apply edit mode (default off). When on, replaces the built-in edit tool with Morph's semantic edit_file. Usage: /fast-apply [on|off|status]",
 
 		async handler(args: string, ctx: ExtensionCommandContext) {
-			if (!getApiKey()) {
-				ctx.ui.notify(
-					"MORPH_API_KEY not set. Get a key at https://morphllm.com/dashboard/api-keys",
-					"error",
-				);
-				return;
-			}
-
 			const arg = args.trim().toLowerCase();
 			let enable: boolean;
 			if (arg === "on") {
@@ -591,9 +587,15 @@ export default function (pi: ExtensionAPI) {
 					"info",
 				);
 				return;
-			} else {
-				// No explicit on/off → toggle (covers bare "/fast-apply").
+			} else if (arg === "") {
+				// Bare "/fast-apply" → toggle.
 				enable = !fastApplyEnabled;
+			} else {
+				ctx.ui.notify(
+					`Unknown argument "${arg}". Usage: /fast-apply [on|off|status]`,
+					"error",
+				);
+				return;
 			}
 
 			if (enable === fastApplyEnabled) {
@@ -602,11 +604,21 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			if (enable) {
+				// Key check belongs on the ON path only — off/status must work without
+				// a key (e.g. to recover after the key is removed).
+				if (!getApiKey()) {
+					ctx.ui.notify(
+						"MORPH_API_KEY not set. Get a key at https://morphllm.com/dashboard/api-keys",
+						"error",
+					);
+					return;
+				}
 				if (!fastApplyRegistered) {
 					registerFastApplyTool();
 					fastApplyRegistered = true;
 				}
 				const current = pi.getActiveTools();
+				editWasActive = current.includes("edit");
 				pi.setActiveTools(
 					Array.from(
 						new Set([...current.filter((t) => t !== "edit"), FAST_APPLY_TOOL_NAME]),
@@ -616,13 +628,20 @@ export default function (pi: ExtensionAPI) {
 				ctx.ui.notify("Morph Fast Apply ON — edit replaced with edit_file.", "info");
 			} else {
 				const current = pi.getActiveTools();
-				pi.setActiveTools(
-					Array.from(
-						new Set([...current.filter((t) => t !== FAST_APPLY_TOOL_NAME), "edit"]),
-					),
-				);
+				const restored = editWasActive
+					? Array.from(
+							new Set([...current.filter((t) => t !== FAST_APPLY_TOOL_NAME), "edit"]),
+						)
+					: current.filter((t) => t !== FAST_APPLY_TOOL_NAME);
+				pi.setActiveTools(restored);
 				fastApplyEnabled = false;
-				ctx.ui.notify("Morph Fast Apply OFF — built-in edit restored.", "info");
+				ctx.ui.notify(
+					editWasActive
+						? "Morph Fast Apply OFF — built-in edit restored."
+						: "Morph Fast Apply OFF — Fast Apply disabled.",
+					"info",
+				);
+				editWasActive = null;
 			}
 		},
 	});
