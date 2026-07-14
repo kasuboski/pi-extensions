@@ -11,10 +11,19 @@
  */
 
 import type {
+	AgentToolResult,
 	ExtensionAPI,
 	ExtensionCommandContext,
 	SessionBeforeCompactEvent,
 } from "@earendil-works/pi-coding-agent";
+import { MorphClient } from "@morphllm/morphsdk";
+import {
+	formatResult,
+	WARP_GREP_DESCRIPTION,
+	WARP_GREP_TOOL_NAME,
+} from "@morphllm/morphsdk/tools/warp-grep";
+import type { WarpGrepResult } from "@morphllm/morphsdk/tools/warp-grep";
+import { Type } from "@sinclair/typebox";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -175,6 +184,68 @@ function formatSummary(data: CompactResponse): string {
 }
 
 // ---------------------------------------------------------------------------
+// Morph WarpGrep — codebase_search tool
+// ---------------------------------------------------------------------------
+
+/**
+ * Description sent to the model. Built on the SDK's canonical WarpGrep
+ * description plus two extra directives (always use full-English queries, and
+ * prefer it for multi-file exploration) per Morph's integration guidance.
+ */
+const CODEBASE_SEARCH_DESCRIPTION =
+	`${WARP_GREP_DESCRIPTION} ` +
+	"You MUST talk to this tool in full, coherent English sentences. " +
+	"When a task requires exploration beyond a single known file, ALWAYS default to the codebase_search tool before other search mechanisms.";
+
+const CodebaseSearchParams = Type.Object({
+	search_term: Type.String({
+		description:
+			"A targeted natural-language query describing what to find or accomplish " +
+			'(e.g. "Find where authentication requests are handled in the Express routes"). ' +
+			"Use full English sentences — NOT regex, keywords, or bare symbol names.",
+	}),
+});
+
+// Lazy MorphClient singleton. MorphClient throws if constructed without an API
+// key, so build it on first use (when getApiKey() is available) and rebuild if
+// the key changes.
+let _morphClient: MorphClient | null = null;
+let _morphCachedKey: string | undefined;
+
+function getMorphClient(): MorphClient | null {
+	const key = getApiKey();
+	if (!key) return null;
+	if (!_morphClient || _morphCachedKey !== key) {
+		_morphClient = new MorphClient({ apiKey: key });
+		_morphCachedKey = key;
+	}
+	return _morphClient;
+}
+
+function makeToolResult(text: string, details: unknown = {}): AgentToolResult<unknown> {
+	return { content: [{ type: "text", text }], details };
+}
+
+function makeToolError(message: string): AgentToolResult<unknown> {
+	return {
+		content: [{ type: "text", text: message }],
+		details: {},
+		isError: true,
+	} as AgentToolResult<unknown> & { isError: true };
+}
+
+function formatMorphError(error: unknown): string {
+	const msg = error instanceof Error ? error.message : String(error);
+	if (/\b401\b|unauthor|api[ _-]?key/i.test(msg)) {
+		return `Morph authentication failed: ${msg}. Check MORPH_API_KEY at https://morphllm.com/dashboard/api-keys`;
+	}
+	if (/\b429\b|rate[ _-]?limit/i.test(msg)) {
+		return `Morph rate limit hit: ${msg}. Wait and retry.`;
+	}
+	return `codebase_search failed: ${msg}`;
+}
+
+// ---------------------------------------------------------------------------
 // Extension entry
 // ---------------------------------------------------------------------------
 
@@ -248,6 +319,88 @@ export default function (pi: ExtensionAPI) {
 					ctx.ui.notify(`Compact failed: ${error.message}`, "error");
 				},
 			});
+		},
+	});
+
+	// ── codebase_search tool: agentic natural-language code search ─────────────
+	// Spins up a Morph WarpGrep sub-agent that runs ripgrep + file reads in its
+	// own context window and returns relevant code snippets. Input is plain
+	// English, NOT regex.
+	pi.registerTool({
+		name: WARP_GREP_TOOL_NAME, // "codebase_search" — see tool-name rule above
+		label: "Codebase Search",
+		description: CODEBASE_SEARCH_DESCRIPTION,
+		promptSnippet:
+			"Agentic natural-language code search across the codebase (Morph WarpGrep)",
+		promptGuidelines: [
+			"Use codebase_search to explore unfamiliar code, find implementations across multiple files, or understand how a feature works before changing it.",
+			"Use codebase_search at the START of an exploration task to orient yourself, then follow up with read/grep for targeted lookups.",
+			'codebase_search takes plain English describing what you are looking for (e.g. "Find the authentication middleware"), NOT regex or bare symbol names — use grep directly for exact pattern or symbol matches.',
+			"Prefer codebase_search over grep/read when you do not already know the exact file or when the task spans multiple files.",
+		],
+		parameters: CodebaseSearchParams,
+
+		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			const searchTerm =
+				((params as { search_term?: string }).search_term ?? "").trim();
+			if (!searchTerm) {
+				throw new Error(
+					"search_term is required: a natural-language description of what to find.",
+				);
+			}
+			if (signal?.aborted) {
+				return makeToolResult("Search cancelled before it started.");
+			}
+
+			const client = getMorphClient();
+			if (!client) {
+				throw new Error(
+					"MORPH_API_KEY is not set. Get a key at https://morphllm.com/dashboard/api-keys",
+				);
+			}
+
+			onUpdate?.({
+				content: [{ type: "text", text: "Searching codebase via Morph WarpGrep…" }],
+				details: {},
+			});
+
+			let result: WarpGrepResult;
+			try {
+				result = await client.warpGrep.execute({
+					searchTerm,
+					repoRoot: ctx.cwd,
+				});
+			} catch (err) {
+				return makeToolError(formatMorphError(err));
+			}
+
+			if (signal?.aborted) {
+				return makeToolResult("Search cancelled after completing.");
+			}
+
+			const files = result.contexts ?? [];
+			const formatted = formatResult(result);
+			const details = {
+				success: result.success,
+				fileCount: files.length,
+				files: files.map((c) => c.file),
+				summary: result.summary,
+				error: result.error,
+			};
+
+			if (!result.success) {
+				// Flag as a tool error so the agent accounts for the failure, while still
+				// passing the formatted reason (formatResult already says "Search failed:")
+				// and the structured details. A successful search with zero matches is NOT
+				// an error — it returns normally with "No relevant code found.".
+				return {
+					content: [{ type: "text", text: formatted }],
+					details,
+					isError: true,
+				} as AgentToolResult<unknown> & { isError: true };
+			}
+
+			return { content: [{ type: "text", text: formatted }], details };
 		},
 	});
 }
