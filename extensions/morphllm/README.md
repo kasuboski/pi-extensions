@@ -1,9 +1,10 @@
 # MorphLLM Extension for Pi
 
-Two Morph integrations for pi:
+Three Morph integrations for pi:
 
 - **`codebase_search` tool** — agentic natural-language code search via [Morph WarpGrep](https://docs.morphllm.com/sdk/components/warp-grep/index).
 - **`/fast-compact` command** — custom compaction via the [Morph Compact API](https://docs.morphllm.com/compact) instead of built-in LLM summarization.
+- **`/fast-apply` command** — toggle [Morph Fast Apply](https://docs.morphllm.com/fast-apply) mode: replaces the built-in `edit` tool with Morph's semantic `edit_file` (outputs only changed lines using `// ... existing code ...` markers).
 
 ## Setup
 
@@ -13,7 +14,7 @@ Set the `MORPH_API_KEY` environment variable. Get a key at [morphllm.com/dashboa
 export MORPH_API_KEY="your-api-key-here"
 ```
 
-Both features reuse this single key. Without it, the tool surfaces a clear error on call and `/fast-compact` falls back to pi's built-in summarization.
+All three features reuse this single key. Without it, the tools surface a clear error on call, `/fast-compact` falls back to pi's built-in summarization, and `/fast-apply` refuses to enable.
 
 ## `codebase_search` tool
 
@@ -48,3 +49,35 @@ This triggers the same flow as `/compact` — the Morph hook intercepts and prov
 ### `/compact [query]` (built-in)
 
 Not intercepted. Always uses pi's native LLM summarization.
+
+## `/fast-apply [on|off|status]`
+
+Toggles Morph Fast Apply edit mode (**off by default**). When enabled, the built-in `edit` tool is **deactivated** and Morph's `edit_file` tool is **activated** in its place; toggling also rebuilds the system prompt, so the tool and its usage guidelines appear/disappear immediately.
+
+```
+/fast-apply          # toggle on/off
+/fast-apply on       # enable
+/fast-apply off      # disable (restores built-in edit)
+/fast-apply status   # show current state without toggling
+```
+
+When on, the model edits files with `edit_file` instead of `edit`:
+
+```text
+# What the model sends — only the changed lines
+edit_file({
+  target_filepath: "src/auth.ts",
+  instructions: "I am adding a null check before creating the session",
+  code_edit: "// ... existing code ...\nif (!user) throw new Error(\"Not found\");\n// ... existing code ..."
+})
+
+# What comes back — a change summary plus a unified diff
+Applied edit to src/auth.ts via Morph Fast Apply (+1 -0 ~1 lines).
+
+@@ ... @@
+ ...
++if (!user) throw new Error("Not found");
+ ...
+```
+
+Morph merges the snippet into the full file server-side and writes it back, so the model emits far fewer tokens than a full-file rewrite. The `edit_file` tool is registered lazily on first enable (it stays registered but inactive while the mode is off). On any failure the result is returned as a tool error; the file is only written on success.
