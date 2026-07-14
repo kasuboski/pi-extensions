@@ -14,7 +14,7 @@ Set the `MORPH_API_KEY` environment variable. Get a key at [morphllm.com/dashboa
 export MORPH_API_KEY="your-api-key-here"
 ```
 
-All three features reuse this single key. Without it, the tools surface a clear error on call, `/fast-compact` falls back to pi's built-in summarization, and `/fast-apply` refuses to enable.
+All three features reuse this single key. Without it, the tools surface a clear error on call, `/fast-compact` refuses to run (shows an error, no compaction), and `/fast-apply` refuses to enable.
 
 ## `codebase_search` tool
 
@@ -42,7 +42,7 @@ Triggers compaction using the Morph Compact API. The optional query focuses the 
 /fast-compact authentication     # Compact, keeping lines about authentication
 ```
 
-The extension registers a `session_before_compact` event handler that **only activates when `/fast-compact` is used** — the built-in `/compact` command is unaffected. If `MORPH_API_KEY` is not set, compaction falls back to pi's built-in LLM summarization.
+The extension registers a `session_before_compact` event handler that **only activates when `/fast-compact` is used** — the built-in `/compact` command is unaffected. If `MORPH_API_KEY` is not set, `/fast-compact` shows an error and performs no compaction (use the built-in `/compact` for native summarization). If the key is set but the Morph API call fails at compact time, the hook logs the error and falls back to pi's built-in LLM summarization.
 
 This triggers the same flow as `/compact` — the Morph hook intercepts and provides the summary.
 
