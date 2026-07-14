@@ -18,5 +18,8 @@
     "@earendil-works/pi-coding-agent": "^0.75.5",
     "@sinclair/typebox": "^0.34.0",
     "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "@morphllm/morphsdk": "^0.2.191"
   }
 }
