@@ -268,6 +268,62 @@ async function spawnAndCapture(
   });
 }
 
+// ─── inherited resource flags ────────────────────────────────────────────────
+//
+// pi is frequently launched with explicit resource paths and auto-discovery
+// disabled — e.g. the nix `pi-ext` wrapper or this repo's `dev.sh`:
+//   pi --no-extensions --no-skills --no-themes -e <path> --skill <path> ...
+// The agent extension spawns a fresh `pi` child that otherwise re-runs
+// auto-discovery and would miss those explicitly-loaded resources. Under the
+// nix wrapper the bundle lives in the Nix store (not a discovery location) and
+// PI_OFFLINE forbids downloading, so the child would silently lose every
+// bundled extension/skill/theme — and with them commands like /fast-*.
+//
+// Forward the parent's resource flags so the child loads the same bundle.
+// Only resource-loading flags are inherited; per-call overrides (model,
+// thinking, tools, system prompt) come from the agent tool params instead.
+
+const RESOURCE_VALUE_FLAGS = new Set([
+  "-e",
+  "--extension",
+  "--skill",
+  "--theme",
+]);
+const RESOURCE_BOOLEAN_FLAGS = new Set([
+  "--no-extensions",
+  "--no-skills",
+  "--no-themes",
+]);
+
+function collectResourceFlags(argv: string[]): string[] {
+  const flags: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (RESOURCE_BOOLEAN_FLAGS.has(arg)) {
+      flags.push(arg);
+      continue;
+    }
+    if (RESOURCE_VALUE_FLAGS.has(arg)) {
+      // Space-separated form: `-e <path>`
+      const next = argv[i + 1];
+      if (next !== undefined && !next.startsWith("-")) {
+        flags.push(arg, next);
+        i++;
+      }
+      continue;
+    }
+    // `--flag=value` form for value flags: `--extension=<path>`
+    const eq = arg.indexOf("=");
+    if (eq > 0 && RESOURCE_VALUE_FLAGS.has(arg.slice(0, eq))) {
+      flags.push(arg);
+    }
+  }
+  return flags;
+}
+
+// process.argv = [<runtime>, <script>, ...pi args]. Computed once at load.
+const inheritedResourceFlags = collectResourceFlags(process.argv.slice(2));
+
 async function runAgent(
   defaultCwd: string,
   params: {
@@ -283,7 +339,16 @@ async function runAgent(
   signal: AbortSignal | undefined,
   onUpdate: ((partial: AgentToolResult<AgentDetails>) => void) | undefined,
 ): Promise<AgentResult> {
-  const args: string[] = ["--mode", "json", "-p", "--no-session"];
+  // Base flags are always the first 4 entries — the herdr path drops them via
+  // args.slice(4), so anything appended below (inherited resources, per-call
+  // overrides, prompt) carries over to the interactive child unchanged.
+  const args: string[] = [
+    "--mode",
+    "json",
+    "-p",
+    "--no-session",
+    ...inheritedResourceFlags,
+  ];
 
   if (params.model) args.push("--model", params.model);
   if (params.thinking) args.push("--thinking", params.thinking);
