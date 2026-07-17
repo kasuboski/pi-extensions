@@ -10,7 +10,7 @@
  * - Checks at agent_end whether STATUS.md was modified; if not, sends a
  *   follow-up reminder (once per turn — no infinite loops)
  * - Shows a condensed live widget above the editor
- * - Registers /status to display the full file
+ * - Registers /status to display the full file and toggle tracking on/off
  */
 
 import type { ExtensionAPI, Theme } from "@mariozechner/pi-coding-agent";
@@ -212,6 +212,10 @@ export default function (pi: ExtensionAPI) {
     return;
   }
 
+  // Tracking is enabled by default to preserve the extension's existing behavior.
+  // `/status` remains available for viewing STATUS.md even when tracking is off.
+  let statusEnabled = true;
+
   // mtime of STATUS.md captured just before each agent turn
   let mtimeBeforeAgent: number | null = null;
 
@@ -233,6 +237,8 @@ export default function (pi: ExtensionAPI) {
 
   // ── before_agent_start: snapshot mtime + inject context ───────────────────
   pi.on("before_agent_start", async (event, ctx) => {
+    if (!statusEnabled) return;
+
     await ensureStatusFile(ctx.cwd);
     mtimeBeforeAgent = await getMtime(ctx.cwd);
 
@@ -256,6 +262,12 @@ export default function (pi: ExtensionAPI) {
 
   // ── agent_end: verify STATUS.md was updated; remind if not ─────────────────
   pi.on("agent_end", async (event, ctx) => {
+    if (!statusEnabled) {
+      mtimeBeforeAgent = null;
+      justReminded = false;
+      return;
+    }
+
     // Never chain reminders back-to-back
     if (justReminded) {
       justReminded = false;
@@ -307,6 +319,8 @@ export default function (pi: ExtensionAPI) {
 
   // ── tool_result: live-update title + status bar when STATUS.md is written ──
   pi.on("tool_result", async (event, ctx) => {
+    if (!statusEnabled) return;
+
     const fileName =
       event.toolName === "write" || event.toolName === "edit"
         ? (event.input as { path?: string }).path
@@ -328,8 +342,50 @@ export default function (pi: ExtensionAPI) {
 
   // ── /status command: floating modal overlay ────────────────────────────────
   pi.registerCommand("status", {
-    description: "Show the current STATUS.md file in a floating modal",
-    handler: async (_args, ctx) => {
+    description:
+      "Show STATUS.md or toggle status tracking. Usage: /status | /status [on|off|status]",
+    handler: async (args, ctx) => {
+      const arg = args.trim().toLowerCase();
+
+      if (arg === "on" || arg === "off") {
+        const enable = arg === "on";
+        if (enable === statusEnabled) {
+          ctx.ui.notify(`Status tracking is already ${enable ? "ON" : "OFF"}.`, "info");
+          return;
+        }
+
+        statusEnabled = enable;
+        if (enable) {
+          await ensureStatusFile(ctx.cwd);
+          const content = await readStatus(ctx.cwd);
+          if (content !== null) {
+            ctx.ui.setStatus("status-tracker", buildStatusLine(content, ctx.ui.theme));
+          }
+          ctx.ui.setTitle(buildTitle(content));
+          ctx.ui.notify("Status tracking ON.", "info");
+        } else {
+          mtimeBeforeAgent = null;
+          justReminded = false;
+          ctx.ui.setStatus("status-tracker", undefined);
+          ctx.ui.setTitle(`π - ${basename(ctx.cwd)}`);
+          ctx.ui.notify("Status tracking OFF.", "info");
+        }
+        return;
+      }
+
+      if (arg === "status") {
+        ctx.ui.notify(
+          statusEnabled ? "Status tracking is currently ON." : "Status tracking is currently OFF.",
+          "info",
+        );
+        return;
+      }
+
+      if (arg) {
+        ctx.ui.notify(`Unknown argument "${arg}". Usage: /status [on|off|status]`, "error");
+        return;
+      }
+
       const content = await readStatus(ctx.cwd);
       if (!content) {
         ctx.ui.notify("STATUS.md not found in " + ctx.cwd, "warning");
@@ -370,8 +426,10 @@ export default function (pi: ExtensionAPI) {
       );
       if (!ok) return;
       await writeFile(statusPath(ctx.cwd), STATUS_TEMPLATE, "utf8");
-      ctx.ui.setStatus("status-tracker", buildStatusLine(STATUS_TEMPLATE, ctx.ui.theme));
-      ctx.ui.setTitle(buildTitle(STATUS_TEMPLATE));
+      if (statusEnabled) {
+        ctx.ui.setStatus("status-tracker", buildStatusLine(STATUS_TEMPLATE, ctx.ui.theme));
+        ctx.ui.setTitle(buildTitle(STATUS_TEMPLATE));
+      }
       ctx.ui.notify("STATUS.md has been reset.", "success");
     },
   });
