@@ -23,6 +23,8 @@ extensions/
   agent/           # Delegate tasks to specialized subagents
   status-tracker/  # STATUS.md tracker extension
   tinyfish/        # Tinyfish integration
+skills/
+  design-control-loop/  # Design and build scheduled agentic control loops
 ```
 
 ## MorphLLM Extension
