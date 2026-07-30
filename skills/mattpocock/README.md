@@ -1,39 +1,53 @@
 # Matt Pocock's Skills (pi port)
 
-Copied from [mattpocock/skills](https://github.com/mattpocock/skills) — Matt Pocock's agent skills for real engineering, described as "small, easy to adapt, and composable." This is a port of all four shipped buckets (**engineering**, **productivity**, **in-progress**, **personal**); the `misc/` and `deprecated/` buckets from the upstream repo are not included.
+Copied from [mattpocock/skills](https://github.com/mattpocock/skills) — Matt Pocock's agent skills for real engineering, described as "small, easy to adapt, and composable."
+
+This copy is synced to upstream commit [`2ab958093e83e0ec752e6c1c5932da465bf23e0c`](https://github.com/mattpocock/skills/commit/2ab958093e83e0ec752e6c1c5932da465bf23e0c) (2026-07-28). It vendors the **engineering**, **productivity**, **in-progress**, and **personal** buckets. The in-progress bucket is intentionally available in pi even though upstream excludes it from its released plugin.
 
 ## What's here
 
 | Bucket | Purpose |
 |---|---|
-| `engineering/` | Daily code work — grilling, domain modeling, TDD, triage, PRDs, issue breakdown, architecture review, debugging, prototyping |
-| `productivity/` | Daily non-code workflow tools — grilling, handoff, teaching, skill-writing reference |
-| `in-progress/` | Matt's drafts not yet shipped upstream (writing skills, review, decision-mapping, loop-me) |
-| `personal/` | Matt's own setup skills (article editing, Obsidian vault) |
+| `engineering/` | Code work — planning, wayfinding, research, domain modeling, TDD, triage, specs, tickets, review, debugging, and prototyping |
+| `productivity/` | General workflows — grilling, handoff, teaching, and skill-writing reference |
+| `in-progress/` | Upstream drafts and experiments, including writing workflows, batch grilling, wizards, and deep-module setup |
+| `personal/` | Matt's own article-editing and Obsidian workflows |
 
-See each bucket's `README.md` for the skill list, and [`docs/invocation.md`](./docs/invocation.md) for the user-invoked vs. model-invoked axis (pi supports the same `disable-model-invocation` flag as the original, so the axis ports mechanically).
+See each bucket's `README.md` for the skill list, and [`docs/invocation.md`](./docs/invocation.md) for the user-invoked vs. model-invoked axis.
 
-## pi-specific changes from the upstream
+## Pi-specific changes from upstream
 
-These are the only modifications. Everything else — the markdown state layer (`CONTEXT.md`, `docs/adr/`, `.out-of-scope/`), the issue-tracker CLI abstraction, the grilling/domain-modeling/codebase-design engines — is verbatim from upstream.
+The vendored content stays as close to upstream as practical. Harness-specific instructions are adapted as follows:
 
-1. **Invocation syntax.** Matt's skills cross-reference each other as `/skill:grilling`, `/skill:domain-modeling`, etc. pi registers skills as `/skill:<name>`, so those references have been rewritten to the ported skill names (`/skill:grilling` → `/skill:grill-with-docs` or `/skill:grill-me` depending on context). Scoped to actual skill names in backticks; file paths (`docs/adr/`, `.out-of-scope/`) are untouched.
-2. **Subagent types.** Three files referenced Claude Code's built-in subagent types — `Explore` and `general-purpose` — which don't exist in pi. Swapped to pi's equivalents: `Explore` → `scout` (codebase recon), `general-purpose` → `worker` (general-purpose with full capabilities). Affected: `engineering/improve-codebase-architecture`, `engineering/codebase-design/DESIGN-IT-TWICE.md`, `in-progress/review`.
+1. **Invocation syntax.** Upstream cross-references such as `/grilling` and `/domain-modeling` become pi commands such as `/skill:grilling` and `/skill:domain-modeling`.
+2. **Agent delegation.** Claude Code `Agent`/sub-agent types and background jobs become pi `agent` tool calls. Pi has no named `worker` or `scout` parameter, so agents are specialized through their prompt, system prompt, and tool allowlist. Independent calls may be submitted in parallel, but the caller waits for their results.
+3. **Agent instructions.** Setup workflows prefer `AGENTS.md` when both `AGENTS.md` and `CLAUDE.md` are present.
+4. **Claude handoff.** The upstream in-progress `claude-handoff` name is retained for path parity, but its `claude --bg` workflow is replaced by a synchronous isolated pi agent call.
+5. **Vendoring boundary cleanup.** References to omitted deprecated skills are removed, and bucket summaries are kept consistent with the current skill bodies.
 
-## What was NOT ported
+Everything else — including the markdown state layer (`CONTEXT.md`, `docs/adr/`, `.out-of-scope/`), issue-tracker abstraction, and engineering vocabulary — follows upstream.
 
-- `misc/` — Claude Code–specific (`git-guardrails` uses Claude's `PreToolUse` hooks + `.claude/settings.json`; the rest is rarely-used tooling).
-- `deprecated/` — superseded upstream.
-- `.claude-plugin/plugin.json` — Claude Code plugin registration (pi-extensions declares skills via `package.json` `pi.skills`, which already points at `./skills` and recurses).
-- Top-level `README.md`, `CHANGELOG.md`, `.changeset/`, `scripts/`, `.github/` — repo management / marketing, not skill content.
+## What is not ported
 
-## Unchanged fields that work in pi
+- `agents/openai.yaml` files — Codex-specific invocation metadata; pi reads skill frontmatter directly.
+- `misc/` — mostly Claude Code-specific hooks and utilities outside this port's scope.
+- `deprecated/` — superseded upstream content.
+- `.claude-plugin/plugin.json` — Claude Code plugin registration; this package declares `./skills` through `package.json` and pi discovers `SKILL.md` files recursively.
+- Upstream repository-management files such as the top-level `README.md`, `CHANGELOG.md`, `.changeset/`, `scripts/`, and `.github/`.
 
-- `disable-model-invocation: true` — pi supports this natively (hidden from system prompt, reachable only via `/skill:<name>`). The whole user-invoked/model-invoked discipline ports.
-- `argument-hint:` — pi ignores unknown frontmatter silently; harmless.
-- `/compact` (referenced in `ask-matt`) — pi has the same command.
-- All skill-internal relative links (`[AGENT-BRIEF.md](AGENT-BRIEF.md)`, `[tests.md](tests.md)`) survive the move unchanged.
+## Frontmatter compatibility
+
+- `disable-model-invocation: true` is supported by pi and keeps a skill out of the model prompt while preserving `/skill:<name>` access.
+- `argument-hint:` is currently ignored as unknown frontmatter, which pi permits.
+- `/compact` is a pi built-in.
+- Skill-internal relative links and helper scripts keep their upstream layout.
 
 ## Syncing upstream
 
-Bucket structure under `mattpocock/` mirrors the upstream so future changes can be diffed against `skills/<bucket>/<skill>/` and merged in, then the two pi-specific substitutions re-applied. Run `git log` here to see the exact set of edits applied at port time.
+1. Check out the desired upstream revision in a temporary directory and record its full commit hash above.
+2. Sync `skills/{engineering,productivity,in-progress,personal}` into this directory, including upstream additions, renames, and deletions, while excluding every `agents/` directory.
+3. Reapply the five port adaptations above. Do not preserve unrelated local wording drift.
+4. Compare file lists and diff local content against the pinned upstream checkout.
+5. Validate frontmatter, duplicate names, relative links, executable scripts, and pi launch via `./dev.sh --help`.
+
+The first port was based on upstream commit `8370e760d0251a3738e006aeacec6d1cb31dd208` (inferred from exact content and timestamps; the original commit did not record the source SHA).
