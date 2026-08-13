@@ -1,9 +1,9 @@
 ---
 name: research
-description: Investigate a question against high-trust primary sources and capture the findings as a Markdown file in the repo. Use when the user wants a topic researched, docs or API facts gathered, or reading legwork delegated to pi's `agent` tool.
+description: Investigate a question against high-trust primary sources and capture the findings as a Markdown file in the repo. Use when the user wants a topic researched, docs or API facts gathered, or reading legwork delegated to an isolated pi agent.
 ---
 
-Delegate the research to an isolated agent using pi's `agent` tool. Put the research brief in `prompt`; the call returns the agent's findings when it finishes.
+Delegate the research to an isolated pi `agent` call. Wait for it to finish before continuing.
 
 Its job:
 

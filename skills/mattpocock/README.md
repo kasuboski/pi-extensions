@@ -2,18 +2,18 @@
 
 Copied from [mattpocock/skills](https://github.com/mattpocock/skills) — Matt Pocock's agent skills for real engineering, described as "small, easy to adapt, and composable."
 
-This copy is synced to upstream commit [`2ab958093e83e0ec752e6c1c5932da465bf23e0c`](https://github.com/mattpocock/skills/commit/2ab958093e83e0ec752e6c1c5932da465bf23e0c) (2026-07-28). It vendors the **engineering**, **productivity**, **in-progress**, and **personal** buckets. The in-progress bucket is intentionally available in pi even though upstream excludes it from its released plugin.
+This copy is synced to upstream commit [`8b78b531ab965735c5dc74f6f7a219e1e37326df`](https://github.com/mattpocock/skills/commit/8b78b531ab965735c5dc74f6f7a219e1e37326df) (2026-08-13). It syncs the **engineering**, **productivity**, **in-progress**, and **personal** buckets. The upstream `personal/` bucket is empty at this revision; the in-progress bucket is intentionally available in pi even though upstream excludes it from its released plugin.
 
 ## What's here
 
 | Bucket | Purpose |
 |---|---|
 | `engineering/` | Code work — planning, wayfinding, research, domain modeling, TDD, triage, specs, tickets, review, debugging, and prototyping |
-| `productivity/` | General workflows — grilling, handoff, teaching, and skill-writing reference |
-| `in-progress/` | Upstream drafts and experiments, including writing workflows, batch grilling, wizards, and deep-module setup |
-| `personal/` | Matt's own article-editing and Obsidian workflows |
+| `productivity/` | General workflows — grilling, handoff, teaching, questionnaires, clarification, and writing for agents |
+| `in-progress/` | Upstream drafts and experiments, including writing workflows, handoff, looping, and deep-module setup |
+| `personal/` | Reserved for the upstream personal bucket; no files are present at this revision |
 
-See each bucket's `README.md` for the skill list, and [`docs/invocation.md`](./docs/invocation.md) for the user-invoked vs. model-invoked axis.
+See each populated bucket's `README.md` for the skill list, and [`docs/invocation.md`](./docs/invocation.md) for the user-invoked vs. model-invoked axis.
 
 ## Pi-specific changes from upstream
 
@@ -25,11 +25,11 @@ The vendored content stays as close to upstream as practical. Harness-specific i
 4. **Claude handoff.** The upstream in-progress `claude-handoff` name is retained for path parity, but its `claude --bg` workflow is replaced by a synchronous isolated pi agent call.
 5. **Vendoring boundary cleanup.** References to omitted deprecated skills are removed, and bucket summaries are kept consistent with the current skill bodies.
 
-Everything else — including the markdown state layer (`CONTEXT.md`, `docs/adr/`, `.out-of-scope/`), issue-tracker abstraction, and engineering vocabulary — follows upstream.
+Everything else follows upstream, including its stateful Markdown artifacts, issue-tracker abstraction, and engineering vocabulary.
 
 ## What is not ported
 
-- `agents/openai.yaml` files — Codex-specific invocation metadata; pi reads skill frontmatter directly.
+- `agents/` directories — Codex-specific invocation metadata; pi reads skill frontmatter directly.
 - `misc/` — mostly Claude Code-specific hooks and utilities outside this port's scope.
 - `deprecated/` — superseded upstream content.
 - `.claude-plugin/plugin.json` — Claude Code plugin registration; this package declares `./skills` through `package.json` and pi discovers `SKILL.md` files recursively.

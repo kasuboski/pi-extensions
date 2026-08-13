@@ -77,7 +77,7 @@ Let them edit before writing.
 - Else if `CLAUDE.md` exists, edit it.
 - If neither exists, ask the user which one to create — don't pick for them.
 
-Prefer `AGENTS.md` whenever it exists. If neither file exists, ask the user which one to create — do not pick for them.
+Prefer `AGENTS.md` whenever it exists. Never create `AGENTS.md` when `CLAUDE.md` already exists (or vice versa) — always edit the one that's already there.
 
 If an `## Agent skills` block already exists in the chosen file, update its contents in-place rather than appending a duplicate. Don't overwrite user edits to the surrounding sections.
 
