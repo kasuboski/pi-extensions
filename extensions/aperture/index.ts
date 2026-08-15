@@ -510,9 +510,16 @@ export default async function apertureExtension(
 
 	// Provenance header + live session id (kept current across /fork, /new,
 	// /resume) for request grouping in the Aperture dashboard.
+	// `x-litellm-session-id` is load-bearing for cache hits: litellm's chatgpt
+	// provider strips body-level prompt_cache_key and mints a fresh upstream
+	// session_id (which the ChatGPT backend uses as its prompt_cache_key) per
+	// request unless litellm_session_id is set — the proxy extracts it from
+	// this header. Without it, prefix cache hit rate through the gateway is ~0%.
 	pi.on("before_provider_headers", (event, ctx) => {
 		event.headers.Referer = "https://pi.dev";
-		event.headers["x-session-id"] = ctx.sessionManager.getSessionId();
+		const sessionId = ctx.sessionManager.getSessionId();
+		event.headers["x-session-id"] = sessionId;
+		event.headers["x-litellm-session-id"] = sessionId;
 		// Override whatever UA the adapter set (pi's OpenAI-SDK adapters leak the
 		// raw SDK default; its anthropic/codex adapters set their own) so gateway
 		// dashboards always see both pi and extension versions.
