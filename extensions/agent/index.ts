@@ -817,7 +817,7 @@ const AgentParams = Type.Object({
   model: Type.Optional(
     Type.String({
       description:
-        "Model pattern or ID <provider/model> (e.g. 'zai/glm-4.7', 'zai/glm-5.2', 'github-copilot/claude-haiku-4.5')",
+        "Model pattern or ID <provider/model> (e.g. 'aperture/glm-5.2', 'aperture/gpt-5.6-luna')",
     }),
   ),
   thinking: Type.Optional(

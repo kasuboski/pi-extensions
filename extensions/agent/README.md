@@ -22,7 +22,7 @@ Use the agent tool to implement input validation on the /api/users endpoint.
 
 ### With overrides
 ```
-Use the agent tool with model "glm-5.2", thinking "low", and tools
+Use the agent tool with model "aperture/glm-5.2", thinking "low", and tools
 ["read", "grep", "find", "ls"] to explore the authentication code.
 ```
 
@@ -33,7 +33,7 @@ Use the agent tool with model "glm-5.2", thinking "low", and tools
 | `prompt` | string (required) | The task or instruction for the agent |
 | `systemPrompt` | string | Full system prompt override |
 | `appendSystemPrompt` | string | Text appended to the default system prompt |
-| `model` | string | Model pattern or ID (e.g. `glm-5.2`, `github-copilot/claude-haiku-4.5`) |
+| `model` | string | Model pattern or ID (e.g. `aperture/glm-5.2`, `aperture/gpt-5.6-luna`) |
 | `thinking` | string | Thinking level: `off`, `minimal`, `low`, `medium`, `high`, `xhigh` |
 | `tools` | string[] | Allowlist of tool names to enable |
 | `excludeTools` | string[] | Tools to exclude from the inherited set |
