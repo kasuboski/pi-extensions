@@ -25,7 +25,7 @@ small model with low thinking and read-only tools.
 agent(
   prompt: "Find all authentication-related code. Return file paths with line
           ranges, key types/interfaces, and architecture notes.",
-  model: "openai-codex/gpt-5.6-luna",
+  model: "aperture/gpt-5.6-luna",
   thinking: "low",
   tools: ["read", "grep", "find", "ls", "bash"]
 )
@@ -41,7 +41,7 @@ agent(
           session store. Focus on concrete steps.",
   systemPrompt: "You are a planning specialist. Produce a numbered plan with
                  specific files and functions to modify. Do NOT make changes.",
-  model: "openai-codex/gpt-5.6-sol",
+  model: "aperture/gpt-5.6-sol",
   thinking: "high",
   tools: ["read", "grep", "find", "ls"]
 )
@@ -56,7 +56,7 @@ agent(
   prompt: "Implement input validation on the /api/users endpoint. Add Zod
           schemas for the request body and return 400 on validation failure."
   thinking: "medium",
-  model: "openai-codex/gpt-5.6-luna"
+  model: "aperture/gpt-5.6-luna"
 )
 ```
 
@@ -70,7 +70,7 @@ agent(
   systemPrompt: "You are a senior code reviewer. Report critical issues,
                  warnings, and suggestions with file paths and line numbers.
                  Bash is read-only only (git diff, git log).",
-  model: "zai/glm-5.2",
+  model: "aperture/glm-5.2",
   thinking: "medium",
   tools: ["read", "grep", "find", "ls", "bash"]
 )
