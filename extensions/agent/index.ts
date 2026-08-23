@@ -13,6 +13,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import type { Message } from "@earendil-works/pi-ai";
 import {
@@ -22,8 +23,12 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
+import { hasAgentSettled } from "./lifecycle";
 
 const COLLAPSED_ITEM_COUNT = 10;
+const LIFECYCLE_EXTENSION_PATH = fileURLToPath(
+  new URL("./lifecycle.ts", import.meta.url),
+);
 
 // ─── formatting helpers ───────────────────────────────────────────────────────
 
@@ -142,7 +147,7 @@ function formatToolCall(
 
 // ─── types ────────────────────────────────────────────────────────────────────
 
-interface UsageStats {
+export interface UsageStats {
   input: number;
   output: number;
   cacheRead: number;
@@ -152,7 +157,7 @@ interface UsageStats {
   turns: number;
 }
 
-interface AgentResult {
+export interface AgentResult {
   exitCode: number;
   messages: Message[];
   stderr: string;
@@ -164,6 +169,26 @@ interface AgentResult {
 
 interface AgentDetails {
   result: AgentResult;
+}
+
+export function updateAgentResult(result: AgentResult, msg: Message): void {
+  result.messages.push(msg);
+
+  if (msg.role !== "assistant") return;
+
+  result.usage.turns++;
+  const usage = msg.usage;
+  if (usage) {
+    result.usage.input += usage.input || 0;
+    result.usage.output += usage.output || 0;
+    result.usage.cacheRead += usage.cacheRead || 0;
+    result.usage.cacheWrite += usage.cacheWrite || 0;
+    result.usage.cost += usage.cost?.total || 0;
+    result.usage.contextTokens = usage.totalTokens || 0;
+  }
+  if (!result.model && msg.model) result.model = msg.model;
+  if (msg.stopReason) result.stopReason = msg.stopReason;
+  result.errorMessage = msg.errorMessage;
 }
 
 function getFinalOutput(messages: Message[]): string {
@@ -407,29 +432,8 @@ async function runAgent(
     let wasAborted = false;
     let buffer = "";
 
-    let readyToQuitInteractive = false;
-
     const recordMessage = (msg: Message) => {
-      result.messages.push(msg);
-
-      if (msg.role === "assistant") {
-        result.usage.turns++;
-        const usage = msg.usage;
-        if (usage) {
-          result.usage.input += usage.input || 0;
-          result.usage.output += usage.output || 0;
-          result.usage.cacheRead += usage.cacheRead || 0;
-          result.usage.cacheWrite += usage.cacheWrite || 0;
-          result.usage.cost += usage.cost?.total || 0;
-          result.usage.contextTokens = usage.totalTokens || 0;
-        }
-        if (!result.model && msg.model) result.model = msg.model;
-        if (msg.stopReason) result.stopReason = msg.stopReason;
-        if (msg.errorMessage) result.errorMessage = msg.errorMessage;
-        if (msg.stopReason && msg.stopReason !== "toolUse") {
-          readyToQuitInteractive = true;
-        }
-      }
+      updateAgentResult(result, msg);
       emitUpdate();
     };
 
@@ -545,6 +549,7 @@ async function runAgent(
       );
       const stderrPath = path.join(runDir, "stderr.log");
       const exitPath = path.join(runDir, "exit-code");
+      const settledPath = path.join(runDir, "agent-settled");
       const runScriptPath = path.join(runDir, "run-agent.sh");
       const sessionId = `agent-${Date.now().toString(36)}-${Math.random()
         .toString(36)
@@ -629,6 +634,9 @@ async function runAgent(
         runDir,
         "--session-id",
         sessionId,
+        ...(inheritedResourceFlags.includes(LIFECYCLE_EXTENSION_PATH)
+          ? []
+          : ["--extension", LIFECYCLE_EXTENSION_PATH]),
         ...args.slice(4),
       ];
       const herdrInvocation = getPiInvocation(interactiveArgs);
@@ -640,6 +648,8 @@ async function runAgent(
 set +e
 cd ${shellQuote(cwd)} || exit 1
 export PI_SUBAGENT=1
+export PI_AGENT_SETTLED_FILE=${shellQuote(settledPath)}
+export PI_AGENT_SETTLED_SESSION_ID=${shellQuote(sessionId)}
 ${commandLine} 2>> ${shellQuote(stderrPath)}
 code=$?
 printf '%s' "$code" > ${shellQuote(exitPath)}
@@ -720,7 +730,8 @@ echo "Agent process exited with code $code."
           if (wasAborted) return 1;
           await pollSession();
 
-          if (readyToQuitInteractive && paneId && !quitSent) {
+          const agentSettled = await hasAgentSettled(settledPath);
+          if (agentSettled && paneId && !quitSent) {
             quitSent = true;
             await spawnAndCapture("herdr", [
               "pane",

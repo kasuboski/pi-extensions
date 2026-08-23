@@ -53,7 +53,7 @@ This is used by `status-tracker` to avoid conflicts with the parent's `STATUS.md
 
 ## Herdr Integration
 
-When running inside herdr (`HERDR_ENV=1`), the tool keeps the same API and result UI, but launches each child `pi` process in a temporary new tab in the current workspace. Focus stays on the parent pane. The child runs in normal interactive pi mode, so the tab shows the native readable TUI instead of raw JSON. The parent reconstructs the structured agent result from the child session JSONL file. After the child reaches a final assistant message, the parent sends `/quit` to the tab, captures the result, and closes the tab after successful completion. If the agent exits non-zero or reports an LLM error, the tab is renamed with a `failed` suffix and left open for inspection along with the temporary session files. Aborting the tool closes the tab.
+When running inside herdr (`HERDR_ENV=1`), the tool keeps the same API and result UI, but launches each child `pi` process in a temporary new tab in the current workspace. Focus stays on the parent pane. The child runs in normal interactive pi mode, so the tab shows the native readable TUI instead of raw JSON. The parent reconstructs the structured agent result from the child session JSONL file. After pi emits `agent_settled`—meaning model retries, compaction retries, and queued follow-ups are complete—the parent sends `/quit` to the tab, captures the result, and closes the tab after successful completion. If the agent exits non-zero or reports an LLM error, the tab is renamed with a `failed` suffix and left open for inspection along with the temporary session files. Aborting the tool closes the tab.
 
 Outside herdr, behavior is unchanged: the agent runs as a normal hidden subprocess.
 
