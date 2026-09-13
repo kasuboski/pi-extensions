@@ -25,7 +25,7 @@ small model with low thinking and read-only tools.
 agent(
   prompt: "Find all authentication-related code. Return file paths with line
           ranges, key types/interfaces, and architecture notes.",
-  model: "aperture/gpt-5.6-luna",
+  model: "aperture/glm-5.3-flash",
   thinking: "low",
   tools: ["read", "grep", "find", "ls", "bash"]
 )
@@ -70,7 +70,7 @@ agent(
   systemPrompt: "You are a senior code reviewer. Report critical issues,
                  warnings, and suggestions with file paths and line numbers.
                  Bash is read-only only (git diff, git log).",
-  model: "aperture/glm-5.2",
+  model: "aperture/glm-5.3",
   thinking: "medium",
   tools: ["read", "grep", "find", "ls", "bash"]
 )
