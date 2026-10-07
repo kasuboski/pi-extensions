@@ -6,10 +6,10 @@ disable-model-invocation: true
 
 Implement the work described by the user in the spec or tickets.
 
-Use /skill:tdd where possible, at pre-agreed seams.
+invoke /skill:tdd where possible, at pre-agreed seams.
 
 Run typechecking regularly, single test files regularly, and the full test suite once at the end.
 
-Once done, use /skill:code-review to review the work.
+Once done, invoke /skill:code-review to review the work.
 
 Commit your work to the current branch.

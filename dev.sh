@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Launch pi with --no-extensions --no-skills and load only local extension
-# and skill directories.
+# and skill directories. Uses Node.js via npx when available, otherwise the
+# installed pi executable.
 # Usage:
 #   ./dev.sh                                 # load all extensions + all skills
 #   ./dev.sh --ext status-tracker            # load only the named extension(s)
@@ -86,4 +87,13 @@ done
 
 echo "Loading extensions: ${ext_names[*]}"
 echo "Loading skills: ${skill_names[*]}"
-exec bunx --bun @earendil-works/pi-coding-agent --no-extensions --no-skills "${ext_args[@]}" "${skill_args[@]}" "${extra_args[@]}"
+pi_args=(--no-extensions --no-skills "${ext_args[@]}" "${skill_args[@]}" "${extra_args[@]}")
+
+if command -v npx >/dev/null 2>&1; then
+  exec npx --yes --package=@earendil-works/pi-coding-agent pi "${pi_args[@]}"
+elif command -v pi >/dev/null 2>&1; then
+  exec pi "${pi_args[@]}"
+else
+  echo "Error: Node.js with npm/npx, or an installed pi executable, is required." >&2
+  exit 1
+fi
