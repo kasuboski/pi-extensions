@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { type AgentResult, updateAgentResult } from "./index.ts";
+import agentExtension, { type AgentResult, updateAgentResult } from "./index.ts";
 import lifecycleExtension, { hasAgentSettled } from "./lifecycle.ts";
 
 const originalSettledFile = process.env.PI_AGENT_SETTLED_FILE;
@@ -21,6 +21,27 @@ afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) =>
     fs.promises.rm(dir, { recursive: true, force: true }),
   ));
+});
+
+it("exposes spawn and controls through the existing agent tool", async () => {
+  const tools: any[] = [];
+  const pi = {
+    registerTool: (tool: any) => tools.push(tool),
+    registerCommand() {},
+    on() {},
+  } as unknown as ExtensionAPI;
+  agentExtension(pi);
+
+  assert.deepEqual(tools.map((tool) => tool.name), ["agent"]);
+  assert.ok(tools[0].parameters.properties.action);
+  const ctx = {
+    cwd: process.cwd(),
+    sessionManager: { getSessionId: () => "session" },
+  };
+  const defaultAction = await tools[0].execute("call", {}, undefined, undefined, ctx);
+  assert.equal(defaultAction.content[0].text, "spawn requires prompt");
+  const result = await tools[0].execute("call", { action: "list" }, undefined, undefined, ctx);
+  assert.equal(result.content[0].text, "No background agents.");
 });
 
 it("clears a transient model error after a successful retry", () => {

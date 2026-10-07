@@ -22,9 +22,9 @@ import {
   withFileMutationQueue,
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
-import { Type } from "@sinclair/typebox";
+import { Type, type Static } from "@sinclair/typebox";
 import { hasAgentSettled } from "./lifecycle.ts";
-import { BackgroundRegistry, type BackgroundJob } from "./registry.ts";
+import { BackgroundRegistry, type BackgroundJob, type BackgroundRunOptions } from "./registry.ts";
 
 const COLLAPSED_ITEM_COUNT = 10;
 const LIFECYCLE_EXTENSION_PATH = fileURLToPath(
@@ -871,47 +871,26 @@ echo "Agent process exited with code $code."
 // ─── schema ───────────────────────────────────────────────────────────────────
 
 const AgentParams = Type.Object({
-  prompt: Type.String({
-    description: "The task or instruction for the agent",
-  }),
-  systemPrompt: Type.Optional(
-    Type.String({
-      description:
-        "Full system prompt override. If omitted, inherits the default coding prompt.",
-    }),
-  ),
-  appendSystemPrompt: Type.Optional(
-    Type.String({
-      description: "Text appended to the default system prompt",
-    }),
-  ),
-  model: Type.Optional(
-    Type.String({
-      description:
-        "Model pattern or ID <provider/model> (e.g. 'aperture/glm-5.2', 'aperture/gpt-5.6-luna')",
-    }),
-  ),
-  thinking: Type.Optional(
-    Type.String({
-      description: "Thinking level: off, minimal, low, medium, high, xhigh",
-    }),
-  ),
-  tools: Type.Optional(
-    Type.Array(Type.String(), {
-      description:
-        "Allowlist of tool names to enable. If omitted, inherits all available tools.",
-    }),
-  ),
-  excludeTools: Type.Optional(
-    Type.Array(Type.String(), {
-      description: "Tools to exclude from the inherited set",
-    }),
-  ),
-  cwd: Type.Optional(
-    Type.String({
-      description: "Working directory for the agent process",
-    }),
-  ),
+  action: Type.Optional(Type.Union([
+    Type.Literal("spawn"),
+    Type.Literal("run"),
+    Type.Literal("wait"),
+    Type.Literal("cancel"),
+    Type.Literal("check"),
+    Type.Literal("list"),
+    Type.Literal("foreground"),
+    Type.Literal("restart"),
+  ], { description: "Omit or use spawn to start a background agent; run waits synchronously." })),
+  prompt: Type.Optional(Type.String({ description: "Task for the agent (required for spawn, run, and restart)" })),
+  id: Type.Optional(Type.String({ description: "Agent ID for check, foreground, cancel, wait, or restart" })),
+  ids: Type.Optional(Type.Array(Type.String(), { maxItems: 64, description: "Agent IDs for wait or cancel" })),
+  systemPrompt: Type.Optional(Type.String({ description: "Full system prompt override" })),
+  appendSystemPrompt: Type.Optional(Type.String({ description: "Text appended to the default system prompt" })),
+  model: Type.Optional(Type.String({ description: "Model pattern or ID such as provider/model" })),
+  thinking: Type.Optional(Type.String({ description: "Thinking level: off, minimal, low, medium, high, xhigh" })),
+  tools: Type.Optional(Type.Array(Type.String(), { description: "Allowlist of tool names to enable" })),
+  excludeTools: Type.Optional(Type.Array(Type.String(), { description: "Tools to exclude" })),
+  cwd: Type.Optional(Type.String({ description: "Working directory for the agent process" })),
 });
 
 // ─── extension ────────────────────────────────────────────────────────────────
@@ -940,7 +919,7 @@ export default function (pi: ExtensionAPI) {
   };
   const persist = (ctx: any) => {
     try {
-      pi.appendEntry("agent_background", { jobs: registry.snapshot(sessionId(ctx)) });
+      pi.appendEntry("agent_jobs", { jobs: registry.snapshot(sessionId(ctx)) });
     } catch {
       // The session may already be shutting down.
     }
@@ -950,7 +929,7 @@ export default function (pi: ExtensionAPI) {
     activeOwner = owner;
     activeContext = ctx;
     for (const entry of ctx.sessionManager.getBranch()) {
-      if (entry.type === "custom" && entry.customType === "agent_background") {
+      if (entry.type === "custom" && entry.customType === "agent_jobs") {
         registry.restore(owner, (entry as any).data?.jobs ?? []);
       }
     }
@@ -985,6 +964,7 @@ export default function (pi: ExtensionAPI) {
     persist(ctx);
     job.runner = fs.promises.mkdir(runDir, { recursive: true })
       .then(() => runAgent(job.cwd || ctx.cwd, {
+        ...job.options,
         prompt: job.prompt,
         background: true,
         runDir,
@@ -1072,21 +1052,8 @@ export default function (pi: ExtensionAPI) {
     },
   });
 
-  const BackgroundParams = Type.Object({
-    action: Type.Union([
-      Type.Literal("spawn"), Type.Literal("restart"), Type.Literal("foreground"),
-      Type.Literal("wait"), Type.Literal("cancel"), Type.Literal("check"), Type.Literal("list"),
-    ]),
-    id: Type.Optional(Type.String()),
-    ids: Type.Optional(Type.Array(Type.String(), { maxItems: 64 })),
-    prompt: Type.Optional(Type.String()),
-  });
-  pi.registerTool({
-    name: "agent_background",
-    label: "Background agents",
-    description: "Spawn and manage background pi agents. Use spawn, then wait/check/list/cancel. Restart reruns in the same saved pi session; foreground focuses its Herdr tab when running.",
-    parameters: BackgroundParams,
-    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+  const executeBackgroundAction = async (params: Static<typeof AgentParams>, signal: AbortSignal | undefined, ctx: any) => {
+      const action = params.action ?? "spawn";
       const owner = sessionId(ctx);
       const owned = registry.list(owner);
       const textResult = (text: string, isError = false) => ({
@@ -1094,29 +1061,36 @@ export default function (pi: ExtensionAPI) {
         details: undefined,
         ...(isError ? { isError: true } : {}),
       });
-      if (params.action === "spawn") {
+      const options: BackgroundRunOptions = {};
+      if (params.systemPrompt !== undefined) options.systemPrompt = params.systemPrompt;
+      if (params.appendSystemPrompt !== undefined) options.appendSystemPrompt = params.appendSystemPrompt;
+      if (params.model !== undefined) options.model = params.model;
+      if (params.thinking !== undefined) options.thinking = params.thinking;
+      if (params.tools !== undefined) options.tools = params.tools;
+      if (params.excludeTools !== undefined) options.excludeTools = params.excludeTools;
+      if (action === "spawn") {
         if (!params.prompt?.trim()) return textResult("spawn requires prompt", true);
         const jobs = registry.list(owner);
         if (jobs.length >= 64) {
           const oldestSettled = jobs.find((entry) => entry.status !== "running");
           if (oldestSettled?.runDir) await fs.promises.rm(oldestSettled.runDir, { recursive: true, force: true });
         }
-        const job = registry.create(owner, params.prompt, ctx.cwd);
+        const job = registry.create(owner, params.prompt, params.cwd ?? ctx.cwd, options);
         if (!job) return textResult("Maximum of 8 running background agents reached.", true);
         launch(job, ctx);
         return textResult(`Started background agent ${job.id}`);
       }
 
-      if (params.action === "list") {
+      if (action === "list") {
         return textResult(owned.map((item) => `${item.id}: ${item.status}`).join("\n") || "No background agents.");
       }
-      const requestedIds = [...new Set(params.ids ?? (params.id ? [params.id] : []))];
-      if (params.action === "wait" || params.action === "cancel") {
-        if (requestedIds.length === 0) return textResult(`${params.action} requires id or ids.`, true);
+      const requestedIds: string[] = [...new Set<string>(params.ids ?? (params.id ? [params.id] : []))];
+      if (action === "wait" || action === "cancel") {
+        if (requestedIds.length === 0) return textResult(`${action} requires id or ids.`, true);
         const jobs = requestedIds.map((id) => registry.get(owner, id));
         if (jobs.some((job) => !job)) return textResult("One or more background agents were not found in this session.", true);
         const targets = jobs as BackgroundJob[];
-        if (params.action === "wait") {
+        if (action === "wait") {
           await Promise.all(targets.map((job) => waitForBackgroundJob(job, signal)));
           for (const job of targets) {
             registry.consume(job.id);
@@ -1145,14 +1119,14 @@ export default function (pi: ExtensionAPI) {
       }
       const job = params.id ? registry.get(owner, params.id) : undefined;
       if (!job) return textResult("This action requires a valid background agent id.", true);
-      if (params.action === "restart") {
+      if (action === "restart") {
         if (!params.prompt?.trim()) return textResult("restart requires a prompt", true);
-        const restarted = registry.restart(owner, job!.id, params.prompt);
+        const restarted = registry.restart(owner, job!.id, params.prompt, options);
         if (!restarted) return textResult("Agent cannot be restarted (it may still be running, have no saved session, or the running limit is reached).", true);
         launch(restarted, ctx);
         return textResult(`Restarted ${restarted.id} in its saved pi session.`);
       }
-      if (params.action === "foreground") {
+      if (action === "foreground") {
         if (await foregroundJob(job!, ctx)) return textResult(`Foregrounded ${job!.id}.`);
         const output = job!.result ? getFinalOutput(job!.result.messages) : "(no output yet)";
         const text = `${job!.id}: ${job!.status}\n${output}`;
@@ -1161,21 +1135,38 @@ export default function (pi: ExtensionAPI) {
       }
       const output = job.result ? getFinalOutput(job.result.messages) : "(no output yet)";
       return textResult(`${job.id}: ${job.status}\n${output}`);
-    },
-  });
+  };
 
   pi.registerTool({
     name: "agent",
     label: "Agent",
     description: [
-      "Delegate tasks to specialized subagents with isolated context.",
-      "The subagent works autonomously and returns a single text result.",
-      "Override the system prompt, model, tools, and thinking level as needed.",
+      "Manage isolated Pi agents. By default, spawn a background agent and use its ID with wait, check, cancel, foreground, or restart; use list to see this session's agents.",
+      "Use action=run for the original synchronous one-shot behavior. Spawned agents accept the same model, thinking, tools, system prompt, and working-directory overrides.",
     ].join(" "),
     parameters: AgentParams,
 
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
-      const result = await runAgent(ctx.cwd, params, signal, onUpdate);
+      if (params.action !== "run") {
+        return await executeBackgroundAction(params, signal, ctx);
+      }
+      if (!params.prompt?.trim()) {
+        return {
+          content: [{ type: "text", text: "run requires a prompt" }],
+          details: undefined,
+          isError: true,
+        };
+      }
+      const result = await runAgent(ctx.cwd, {
+        prompt: params.prompt,
+        systemPrompt: params.systemPrompt,
+        appendSystemPrompt: params.appendSystemPrompt,
+        model: params.model,
+        thinking: params.thinking,
+        tools: params.tools,
+        excludeTools: params.excludeTools,
+        cwd: params.cwd,
+      }, signal, onUpdate);
 
       const isError =
         result.exitCode !== 0 ||
@@ -1212,6 +1203,7 @@ export default function (pi: ExtensionAPI) {
     renderCall(args, theme, _context) {
       const parts: string[] = [];
       parts.push(theme.fg("toolTitle", theme.bold("agent ")));
+      parts.push(theme.fg("muted", `[${args.action ?? "spawn"}]`));
       if (args.model) parts.push(theme.fg("accent", args.model));
       else parts.push(theme.fg("muted", "(default model)"));
       if (args.thinking)

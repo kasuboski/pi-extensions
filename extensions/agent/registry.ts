@@ -2,11 +2,21 @@ import type { AgentResult } from "./index.ts";
 
 export type BackgroundStatus = "running" | "completed" | "failed" | "cancelled";
 
+export type BackgroundRunOptions = {
+  systemPrompt?: string;
+  appendSystemPrompt?: string;
+  model?: string;
+  thinking?: string;
+  tools?: string[];
+  excludeTools?: string[];
+};
+
 export type BackgroundJob = {
   id: string;
   sessionId: string;
   prompt: string;
   cwd: string;
+  options: BackgroundRunOptions;
   controller: AbortController;
   status: BackgroundStatus;
   result?: AgentResult;
@@ -51,7 +61,12 @@ export class BackgroundRegistry {
     return job?.sessionId === owner ? job : undefined;
   }
 
-  create(owner: string, prompt: string, cwd = process.cwd()): BackgroundJob | undefined {
+  create(
+    owner: string,
+    prompt: string,
+    cwd = process.cwd(),
+    options: BackgroundRunOptions = {},
+  ): BackgroundJob | undefined {
     const jobs = this.list(owner);
     if (jobs.filter((job) => job.status === "running").length >= this.maxRunning) return;
     while (jobs.length >= this.maxTracked) {
@@ -66,6 +81,7 @@ export class BackgroundRegistry {
       sessionId: owner,
       prompt,
       cwd,
+      options,
       controller: new AbortController(),
       status: "running",
       consumed: false,
@@ -77,13 +93,19 @@ export class BackgroundRegistry {
     return job;
   }
 
-  restart(owner: string, id: string, prompt: string): BackgroundJob | undefined {
+  restart(
+    owner: string,
+    id: string,
+    prompt: string,
+    options: BackgroundRunOptions = {},
+  ): BackgroundJob | undefined {
     const job = this.get(owner, id);
     if (!job || job.status === "running") return;
     if (this.list(owner).filter((entry) => entry.status === "running").length >= this.maxRunning) return;
     if (!job.runDir || !job.childSessionId) return;
     const pending = deferred();
     job.prompt = prompt;
+    job.options = { ...job.options, ...options };
     job.controller = new AbortController();
     job.status = "running";
     job.result = undefined;
@@ -153,6 +175,7 @@ export class BackgroundRegistry {
       const pending = deferred();
       const job: BackgroundJob = {
         ...record,
+        options: record.options ?? {},
         sessionId: owner,
         controller: new AbortController(),
         status: record.status === "running" ? "failed" : record.status,

@@ -36,7 +36,10 @@ it("prunes oldest settled jobs while retaining the running limit", () => {
 
 it("later persisted snapshots replace stale records and restart reuses session identity", () => {
   const registry = new BackgroundRegistry();
-  const job = registry.create("owner", "initial task")!;
+  const job = registry.create("owner", "initial task", "/tmp/project", {
+    model: "aperture/gpt-6-luna",
+    tools: ["read", "bash"],
+  })!;
   job.runDir = "/tmp/agent-session";
   job.childSessionId = "child-session";
   const early = registry.snapshot("owner");
@@ -49,6 +52,8 @@ it("later persisted snapshots replace stale records and restart reuses session i
   const restarted = restored.restart("owner", job.id, "continue work");
   assert.equal(restarted?.runDir, "/tmp/agent-session");
   assert.equal(restarted?.childSessionId, "child-session");
+  assert.equal(restarted?.cwd, "/tmp/project");
+  assert.deepEqual(restarted?.options, { model: "aperture/gpt-6-luna", tools: ["read", "bash"] });
   assert.equal(restarted?.status, "running");
 });
 
