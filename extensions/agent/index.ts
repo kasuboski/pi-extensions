@@ -912,6 +912,7 @@ export default function (pi: ExtensionAPI) {
       try {
         pi.sendUserMessage(text, { deliverAs: "followUp" });
         pendingResults.delete(id);
+        persist(activeContext);
       } catch {
         registry.releaseDelivery(id);
       }
@@ -928,11 +929,11 @@ export default function (pi: ExtensionAPI) {
     const owner = sessionId(ctx);
     activeOwner = owner;
     activeContext = ctx;
+    let latestSnapshot: any;
     for (const entry of ctx.sessionManager.getBranch()) {
-      if (entry.type === "custom" && entry.customType === "agent_jobs") {
-        registry.restore(owner, (entry as any).data?.jobs ?? []);
-      }
+      if (entry.type === "custom" && entry.customType === "agent_jobs") latestSnapshot = entry;
     }
+    if (latestSnapshot) registry.restore(owner, latestSnapshot.data?.jobs ?? []);
     for (const job of registry.list(owner)) {
       if (job.status !== "running" && !job.consumed && !job.delivered) {
         const output = job.result ? getFinalOutput(job.result.messages) : "(agent process ended before a result was recorded)";
@@ -1071,12 +1072,12 @@ export default function (pi: ExtensionAPI) {
       if (action === "spawn") {
         if (!params.prompt?.trim()) return textResult("spawn requires prompt", true);
         const jobs = registry.list(owner);
-        if (jobs.length >= 64) {
-          const oldestSettled = jobs.find((entry) => entry.status !== "running");
-          if (oldestSettled?.runDir) await fs.promises.rm(oldestSettled.runDir, { recursive: true, force: true });
-        }
+        const oldestSettled = jobs.length >= 64 ? jobs.find((entry) => entry.status !== "running") : undefined;
         const job = registry.create(owner, params.prompt, params.cwd ?? ctx.cwd, options);
         if (!job) return textResult("Maximum of 8 running background agents reached.", true);
+        if (oldestSettled?.runDir && !registry.get(owner, oldestSettled.id)) {
+          await fs.promises.rm(oldestSettled.runDir, { recursive: true, force: true });
+        }
         launch(job, ctx);
         return textResult(`Started background agent ${job.id}`);
       }

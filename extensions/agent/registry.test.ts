@@ -12,6 +12,20 @@ it("isolates owners and enforces running/tracked limits", () => {
   assert.equal(registry.list("b").length, 0);
 });
 
+it("does not prune a settled run directory when creation is rejected at the running limit", () => {
+  const registry = new BackgroundRegistry(2, 3);
+  const settled = registry.create("owner", "settled")!;
+  registry.settle(settled.id, "completed");
+  const running = registry.create("owner", "running")!;
+  const secondRunning = registry.create("owner", "second running")!;
+  settled.runDir = "/tmp/keep-this-run";
+
+  assert.equal(registry.create("owner", "rejected"), undefined);
+  assert.equal(registry.get("owner", settled.id)?.runDir, "/tmp/keep-this-run");
+  assert.ok(registry.get("owner", running.id));
+  assert.ok(registry.get("owner", secondRunning.id));
+});
+
 it("wait completion resolves and snapshots restore across restart", async () => {
   const registry = new BackgroundRegistry();
   const job = registry.create("owner", "do work")!;
@@ -32,6 +46,20 @@ it("prunes oldest settled jobs while retaining the running limit", () => {
   const third = registry.create("owner", "three")!;
   assert.equal(registry.get("owner", first.id), undefined);
   assert.deepEqual(registry.list("owner").map((job) => job.id), [second.id, third.id]);
+});
+
+it("restoring a full snapshot removes records absent from it without touching other owners", () => {
+  const registry = new BackgroundRegistry();
+  const removed = registry.create("owner", "will be pruned")!;
+  const retained = registry.create("owner", "retained")!;
+  const otherOwner = registry.create("other", "other owner")!;
+  const snapshot = registry.snapshot("owner").filter((record) => record.id === retained.id);
+
+  registry.restore("owner", snapshot);
+
+  assert.equal(registry.get("owner", removed.id), undefined);
+  assert.ok(registry.get("owner", retained.id));
+  assert.ok(registry.get("other", otherOwner.id));
 });
 
 it("later persisted snapshots replace stale records and restart reuses session identity", () => {

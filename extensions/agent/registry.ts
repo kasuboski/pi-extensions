@@ -169,6 +169,7 @@ export class BackgroundRegistry {
   }
 
   restore(owner: string, records: JobRecord[]): void {
+    for (const job of this.list(owner)) this.jobs.delete(job.id);
     for (const record of records) {
       const current = this.jobs.get(record.id);
       if (current && current.sessionId !== owner) continue;

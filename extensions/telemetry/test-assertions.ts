@@ -36,8 +36,10 @@ export function expect(actual: any): Matchers {
       else assert.strictEqual(actual, expected);
     },
     toEqual(expected) {
-      if (negated) assert.notDeepStrictEqual(actual, expected);
-      else assert.deepStrictEqual(normalizeForEquality(actual), normalizeForEquality(expected));
+      const normalizedActual = normalizeForEquality(actual);
+      const normalizedExpected = normalizeForEquality(expected);
+      if (negated) assert.notDeepStrictEqual(normalizedActual, normalizedExpected);
+      else assert.deepStrictEqual(normalizedActual, normalizedExpected);
     },
     toBeDefined() {
       if (negated) assert.strictEqual(actual, undefined);

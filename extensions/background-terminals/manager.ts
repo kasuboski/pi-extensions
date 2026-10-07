@@ -65,7 +65,7 @@ export class TerminalManager {
     if (this.runningCount() >= MAX_RUNNING) throw new Error(`Maximum ${MAX_RUNNING} running terminals reached`);
     while (this.entries.size >= MAX_TRACKED) {
       const oldestSettled = [...this.entries.entries()]
-        .filter(([, entry]) => entry.terminal.status !== "running")
+        .filter(([, entry]) => entry.finalized)
         .sort((a, b) => a[1].terminal.startedAt - b[1].terminal.startedAt)[0];
       if (!oldestSettled) throw new Error(`Maximum ${MAX_TRACKED} tracked terminals reached`);
       const [oldId] = oldestSettled;
@@ -107,7 +107,6 @@ export class TerminalManager {
     child.once("exit", code => {
       terminal.exitCode = code;
       this.setStatus(entry, entry.killRequested ? "killed" : "exited");
-      if (entry.killTimer) clearTimeout(entry.killTimer);
     });
     child.once("close", code => {
       if (terminal.exitCode === undefined) terminal.exitCode = code;
@@ -163,7 +162,7 @@ export class TerminalManager {
   }
 
   private snapshot(terminal: Terminal): Terminal { return { ...terminal }; }
-  runningCount(): number { return [...this.entries.values()].filter(e => e.terminal.status === "running").length; }
+  runningCount(): number { return [...this.entries.values()].filter(e => !e.finalized).length; }
   list(): Terminal[] { return [...this.entries.values()].map(e => this.snapshot(e.terminal)); }
   get(id: string): Terminal | undefined { const terminal = this.entries.get(id)?.terminal; return terminal && this.snapshot(terminal); }
 
@@ -184,14 +183,13 @@ export class TerminalManager {
   async readLogs(id: string, stream?: LogStream): Promise<{ stdout: string; stderr: string } | string> {
     const entry = this.entries.get(id);
     if (!entry) throw new Error(`Unknown terminal ${id}`);
-    await entry.completion;
     const read = (key: LogStream) => readFileSync(join(this.logDirectory, `${id}.${key}.log`), "utf8");
     return stream ? read(stream) : { stdout: read("stdout"), stderr: read("stderr") };
   }
 
   async kill(id: string): Promise<boolean> {
     const entry = this.entries.get(id);
-    if (!entry || entry.terminal.status !== "running") return false;
+    if (!entry || entry.finalized) return false;
     entry.killRequested = true;
     this.sendSignal(entry, "SIGTERM");
     entry.killTimer = setTimeout(() => this.sendSignal(entry, "SIGKILL"), KILL_GRACE_MS);
@@ -204,7 +202,15 @@ export class TerminalManager {
     if (entry.finalized) return;
     try {
       if (process.platform !== "win32" && entry.child.pid) process.kill(-entry.child.pid, signal);
-      else entry.child.kill(signal);
+      else if (process.platform === "win32" && entry.child.pid) {
+        const args = ["/pid", String(entry.child.pid), "/t"];
+        if (signal === "SIGKILL") args.push("/f");
+        const killer = spawn("taskkill", args, { windowsHide: true, stdio: "ignore" });
+        killer.on("error", () => {
+          try { entry.child.kill(signal); } catch { /* The process may have closed meanwhile. */ }
+        });
+        killer.unref();
+      } else entry.child.kill(signal);
     } catch (error) {
       // ESRCH means the process exited in the race between status check and signal.
       if ((error as NodeJS.ErrnoException).code !== "ESRCH") {
@@ -219,7 +225,7 @@ export class TerminalManager {
   }
 
   async shutdown(): Promise<void> {
-    await this.killMany(this.list().filter(t => t.status === "running").map(t => t.id));
+    await this.killMany([...this.entries.values()].filter(entry => !entry.finalized).map(entry => entry.terminal.id));
   }
 
   /** Stops children and removes the private log directory. */

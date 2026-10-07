@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { TerminalManager, MAX_OUTPUT } from "./manager.ts";
+import { TerminalManager, MAX_OUTPUT, MAX_RUNNING } from "./manager.ts";
 
 const nodeCommand = (source: string) => `${JSON.stringify(process.execPath)} -e ${JSON.stringify(source)}`;
 
@@ -39,6 +39,66 @@ describe("TerminalManager", () => {
       assert.equal((await manager.wait(terminal.id)).status, "killed");
       assert.equal(manager.get(terminal.id)?.status, "killed");
     } finally {
+      await manager.dispose();
+    }
+  });
+
+  it("reads complete spill logs while the command is still running", async () => {
+    const manager = new TerminalManager();
+    const terminal = manager.start(nodeCommand(`process.stdout.write('live output'); setTimeout(() => {}, 30000)`), process.cwd());
+    let unsubscribe = () => {};
+    try {
+      await new Promise<void>((resolve) => {
+        unsubscribe = manager.subscribe(event => {
+          if (event.type === "output" && event.id === terminal.id) resolve();
+        });
+      });
+      assert.equal(manager.get(terminal.id)?.status, "running");
+      assert.equal(await manager.readLogs(terminal.id, "stdout"), "live output");
+    } finally {
+      unsubscribe();
+      await manager.dispose();
+    }
+  });
+
+  it("counts exited-but-not-closed terminals against the running limit", async () => {
+    const manager = new TerminalManager();
+    const terminal = manager.start("trap '' TERM; sleep 30 &", process.cwd());
+    let unsubscribe = () => {};
+    try {
+      await new Promise<void>((resolve) => {
+        unsubscribe = manager.subscribe(event => {
+          if (event.type === "status" && event.terminal.id === terminal.id && event.terminal.status === "exited") resolve();
+        });
+      });
+      assert.equal(manager.get(terminal.id)?.status, "exited");
+      assert.equal(manager.runningCount(), 1);
+
+      for (let i = 1; i < MAX_RUNNING; i++) manager.start("sleep 30", process.cwd());
+      assert.equal(manager.runningCount(), MAX_RUNNING);
+      assert.throws(() => manager.start("true", process.cwd()), /Maximum 8 running terminals reached/);
+    } finally {
+      unsubscribe();
+      await manager.dispose();
+    }
+  });
+
+  it("keeps exited-but-not-closed process trees eligible for shutdown cleanup", async () => {
+    const manager = new TerminalManager();
+    const terminal = manager.start("trap '' TERM; sleep 30 &", process.cwd());
+    let unsubscribe = () => {};
+    try {
+      await new Promise<void>((resolve) => {
+        unsubscribe = manager.subscribe(event => {
+          if (event.type === "status" && event.terminal.id === terminal.id && event.terminal.status === "exited") resolve();
+        });
+      });
+      assert.equal(manager.get(terminal.id)?.status, "exited");
+      await manager.shutdown();
+      assert.equal(manager.get(terminal.id)?.status, "killed");
+      await manager.wait(terminal.id);
+    } finally {
+      unsubscribe();
       await manager.dispose();
     }
   });

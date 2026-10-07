@@ -6,6 +6,7 @@ import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import agentExtension, { type AgentResult, updateAgentResult } from "./index.ts";
 import lifecycleExtension, { hasAgentSettled } from "./lifecycle.ts";
+import { BackgroundRegistry } from "./registry.ts";
 
 const originalSettledFile = process.env.PI_AGENT_SETTLED_FILE;
 const originalSettledSessionId = process.env.PI_AGENT_SETTLED_SESSION_ID;
@@ -42,6 +43,76 @@ it("exposes spawn and controls through the existing agent tool", async () => {
   assert.equal(defaultAction.content[0].text, "spawn requires prompt");
   const result = await tools[0].execute("call", { action: "list" }, undefined, undefined, ctx);
   assert.equal(result.content[0].text, "No background agents.");
+});
+
+it("persists successful result delivery so session resume does not send it again", async () => {
+  const registry = new BackgroundRegistry();
+  const job = registry.create("session", "work")!;
+  registry.settle(job.id, "completed");
+  const initial = { type: "custom", customType: "agent_jobs", data: { jobs: registry.snapshot("session") } };
+  const entries: any[] = [];
+  const sent: string[] = [];
+  const handlers = new Map<string, (...args: any[]) => Promise<void>>();
+  const commands = new Map<string, any>();
+  const createPi = () => ({
+    on(event: string, handler: (...args: any[]) => Promise<void>) { handlers.set(event, handler); },
+    appendEntry(type: string, data: unknown) { entries.push({ type: "custom", customType: type, data }); },
+    sendUserMessage(text: string) { sent.push(text); },
+    registerCommand(name: string, command: any) { commands.set(name, command); },
+    registerTool() {},
+  } as unknown as ExtensionAPI);
+  const makeContext = (branch: any[]) => ({
+    isIdle: () => true,
+    cwd: process.cwd(),
+    sessionManager: { getSessionId: () => "session", getBranch: () => branch },
+  });
+
+  agentExtension(createPi());
+  await handlers.get("session_start")?.({}, makeContext([initial]));
+  assert.equal(sent.length, 1);
+  assert.equal(entries.at(-1)?.data.jobs[0].delivered, true);
+
+  const resumedHandlers = new Map<string, (...args: any[]) => Promise<void>>();
+  const resumedEntries = [...entries];
+  const resumedPi = {
+    ...createPi(),
+    on(event: string, handler: (...args: any[]) => Promise<void>) { resumedHandlers.set(event, handler); },
+  } as unknown as ExtensionAPI;
+  agentExtension(resumedPi);
+  await resumedHandlers.get("session_start")?.({}, makeContext([initial, resumedEntries.at(-1)]));
+  assert.equal(sent.length, 1);
+});
+
+it("restores jobs from only the latest full session snapshot", async () => {
+  const registry = new BackgroundRegistry();
+  const oldJob = registry.create("session", "old job")!;
+  const oldSnapshot = registry.snapshot("session");
+  const latestJob = registry.create("session", "latest job")!;
+  const latestSnapshot = registry.snapshot("session").filter((record) => record.id === latestJob.id);
+  const handlers = new Map<string, (...args: any[]) => Promise<void>>();
+  const tools: any[] = [];
+  const pi = {
+    on(event: string, handler: (...args: any[]) => Promise<void>) { handlers.set(event, handler); },
+    registerCommand() {},
+    registerTool(tool: any) { tools.push(tool); },
+  } as unknown as ExtensionAPI;
+  agentExtension(pi);
+  const ctx = {
+    isIdle: () => false,
+    cwd: process.cwd(),
+    sessionManager: {
+      getSessionId: () => "session",
+      getBranch: () => [
+        { type: "custom", customType: "agent_jobs", data: { jobs: oldSnapshot } },
+        { type: "custom", customType: "agent_jobs", data: { jobs: latestSnapshot } },
+      ],
+    },
+  };
+
+  await handlers.get("session_start")?.({}, ctx);
+  const listed = await tools[0].execute("call", { action: "list" }, undefined, undefined, ctx);
+  assert.match(listed.content[0].text, new RegExp(latestJob.id));
+  assert.doesNotMatch(listed.content[0].text, new RegExp(oldJob.id));
 });
 
 it("clears a transient model error after a successful retry", () => {
