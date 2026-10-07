@@ -1,6 +1,6 @@
 import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { loadConfig, type TelemetryConfig } from "./config";
-import { TelemetryRuntime } from "./lifecycle";
+import { loadConfig, type TelemetryConfig } from "./config.ts";
+import { TelemetryRuntime } from "./lifecycle.ts";
 
 type Runtime = Pick<TelemetryRuntime, "agentStart" | "beforeSettle" | "settled" | "toolStart" | "toolEnd" | "inject" | "shutdown">;
 type Dependencies = {

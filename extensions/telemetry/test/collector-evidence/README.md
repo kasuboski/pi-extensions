@@ -8,16 +8,15 @@ Run from the repository root:
 
 ```sh
 docker info
-mise exec -- bun --version                 # 1.3.11
 mise exec node@24.20.0 -- node --version    # v24.20.0
 KEEP_COLLECTOR_EVIDENCE=1 bash extensions/telemetry/test/collector.integration.sh
-mise exec -- bun test --cwd extensions/telemetry
-mise exec -- bun run --cwd extensions/telemetry typecheck
+mise exec node@24.20.0 -- npm test --prefix extensions/telemetry
+mise exec node@24.20.0 -- npm run typecheck --prefix extensions/telemetry
 bash -n extensions/telemetry/test/collector.integration.sh
 ```
 
 - Pi SDK dependency: `@earendil-works/pi-coding-agent` 1.0.2.
-- Actual SDK execution runtime: Bun 1.3.11 (Node version checked, not used for the SDK run).
+- The checked-in collector artifacts were captured by an earlier Bun 1.3.11 run. The current reproduction commands use Node 24.20.0.
 - Collector: `otelcol-contrib version 0.123.0`.
 - Official image: `otel/opentelemetry-collector-contrib:0.123.0`.
 - Pinned digest: `sha256:e39311df1f3d941923c00da79ac7ba6269124a870ee87e3c3ad24d60f8aee4d2`.
@@ -25,7 +24,7 @@ bash -n extensions/telemetry/test/collector.integration.sh
 
 ## Result
 
-The collector harness passed three times after correcting fixture tool activation (two retained runs and one default-cleanup run). `bun test` passed **40 tests, 0 failures, 171 assertions**; typecheck and shell syntax check passed.
+The collector harness passed three times after correcting fixture tool activation (two retained runs and one default-cleanup run). In that earlier Bun run, the suite passed **40 tests, 0 failures, 171 assertions**; typecheck and shell syntax check passed. Re-run the updated Node commands to validate this migrated checkout.
 
 Raw evidence:
 

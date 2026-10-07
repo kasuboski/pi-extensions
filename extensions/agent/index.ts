@@ -23,7 +23,8 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
-import { hasAgentSettled } from "./lifecycle";
+import { hasAgentSettled } from "./lifecycle.ts";
+import { BackgroundRegistry, type BackgroundJob } from "./registry.ts";
 
 const COLLAPSED_ITEM_COUNT = 10;
 const LIFECYCLE_EXTENSION_PATH = fileURLToPath(
@@ -349,10 +350,35 @@ function collectResourceFlags(argv: string[]): string[] {
 // process.argv = [<runtime>, <script>, ...pi args]. Computed once at load.
 const inheritedResourceFlags = collectResourceFlags(process.argv.slice(2));
 
+async function waitForBackgroundJob(job: BackgroundJob, signal?: AbortSignal): Promise<void> {
+  if (!signal) return job.completion;
+  if (signal.aborted) throw new Error("Wait aborted; the agent continues running.");
+  await new Promise<void>((resolve, reject) => {
+    const cleanup = () => signal.removeEventListener("abort", onAbort);
+    const onAbort = () => {
+      cleanup();
+      reject(new Error("Wait aborted; the agent continues running."));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+    job.completion.then(() => {
+      cleanup();
+      resolve();
+    }, (error) => {
+      cleanup();
+      reject(error);
+    });
+  });
+}
+
 async function runAgent(
   defaultCwd: string,
   params: {
     prompt: string;
+    background?: boolean;
+    foreground?: boolean;
+    runDir?: string;
+    childSessionId?: string;
+    onHerdrCreated?: (tabId: string, paneId: string, sessionId: string) => void;
     systemPrompt?: string;
     appendSystemPrompt?: string;
     model?: string;
@@ -371,7 +397,7 @@ async function runAgent(
     "--mode",
     "json",
     "-p",
-    "--no-session",
+    ...(params.background ? [] : ["--no-session"]),
     ...inheritedResourceFlags,
   ];
 
@@ -472,14 +498,24 @@ async function runAgent(
 
     const runNative = async (): Promise<number> => {
       return await new Promise<number>((resolve) => {
-        const proc = spawn(invocation.command, invocation.args, {
+        const nativeArgs = params.background
+          ? [
+              ...invocation.args.slice(0, -1),
+              "--session-dir", params.runDir!,
+              "--session-id", params.childSessionId!,
+              invocation.args[invocation.args.length - 1],
+            ]
+          : invocation.args;
+        const proc = spawn(invocation.command, nativeArgs, {
           cwd,
           env: { ...process.env, PI_SUBAGENT: "1" },
           shell: false,
           stdio: ["ignore", "pipe", "pipe"],
         });
         let abortHandler: (() => void) | undefined;
+        let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
         const finish = (code: number) => {
+          if (forceKillTimer) clearTimeout(forceKillTimer);
           if (signal && abortHandler) {
             signal.removeEventListener("abort", abortHandler);
           }
@@ -505,9 +541,10 @@ async function runAgent(
           abortHandler = () => {
             wasAborted = true;
             proc.kill("SIGTERM");
-            setTimeout(() => {
-              if (!proc.killed) proc.kill("SIGKILL");
+            forceKillTimer = setTimeout(() => {
+              if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
             }, 5000);
+            forceKillTimer.unref?.();
           };
           if (signal.aborted) abortHandler();
           else signal.addEventListener("abort", abortHandler, { once: true });
@@ -544,14 +581,19 @@ async function runAgent(
     };
 
     const runHerdr = async (): Promise<number> => {
-      const runDir = await fs.promises.mkdtemp(
-        path.join(os.tmpdir(), "pi-herdr-agent-"),
-      );
+      const runDir = params.background && params.runDir
+        ? params.runDir
+        : await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-herdr-agent-"));
       const stderrPath = path.join(runDir, "stderr.log");
       const exitPath = path.join(runDir, "exit-code");
       const settledPath = path.join(runDir, "agent-settled");
       const runScriptPath = path.join(runDir, "run-agent.sh");
-      const sessionId = `agent-${Date.now().toString(36)}-${Math.random()
+      if (params.background) {
+        await Promise.all([stderrPath, exitPath, settledPath].map((file) =>
+          fs.promises.rm(file, { force: true }),
+        ));
+      }
+      const sessionId = params.childSessionId ?? `agent-${Date.now().toString(36)}-${Math.random()
         .toString(36)
         .slice(2, 10)}`;
       let tabId: string | undefined;
@@ -571,7 +613,7 @@ async function runAgent(
       };
 
       const fallbackNative = async (): Promise<number> => {
-        await cleanupRunDir();
+        if (!params.background) await cleanupRunDir();
         return await runNative();
       };
 
@@ -629,6 +671,20 @@ async function runAgent(
       const quoteArgs = (command: string, args: string[]) =>
         [command, ...args].map(shellQuote).join(" ");
 
+      // A background rerun opens the same child session, but consumes only
+      // entries appended by this run when reconstructing the result.
+      if (params.background) {
+        try {
+          const files = await fs.promises.readdir(runDir);
+          const existing = files.find((file) => file.endsWith(`_${sessionId}.jsonl`));
+          if (existing) {
+            sessionPath = path.join(runDir, existing);
+            sessionReadOffset = (await fs.promises.readFile(sessionPath, "utf8")).length;
+          }
+        } catch {
+          // First run: no session file exists yet.
+        }
+      }
       const interactiveArgs = [
         "--session-dir",
         runDir,
@@ -637,7 +693,7 @@ async function runAgent(
         ...(inheritedResourceFlags.includes(LIFECYCLE_EXTENSION_PATH)
           ? []
           : ["--extension", LIFECYCLE_EXTENSION_PATH]),
-        ...args.slice(4),
+        ...args.slice(params.background ? 3 : 4),
       ];
       const herdrInvocation = getPiInvocation(interactiveArgs);
       const commandLine = quoteArgs(
@@ -670,7 +726,7 @@ echo "Agent process exited with code $code."
         cwd,
         "--label",
         name,
-        "--no-focus",
+        ...(params.foreground ? ["--focus"] : ["--no-focus"]),
         "--env",
         "PI_SUBAGENT=1",
       ];
@@ -699,6 +755,7 @@ echo "Agent process exited with code $code."
         return await fallbackNative();
       }
 
+      params.onHerdrCreated?.(tabId!, paneId, sessionId);
       const started = await spawnAndCapture(
         "herdr",
         ["pane", "run", paneId, `bash ${shellQuote(runScriptPath)}`],
@@ -715,7 +772,7 @@ echo "Agent process exited with code $code."
         if (tabId) await spawnAndCapture("herdr", ["tab", "close", tabId]);
         else if (paneId)
           await spawnAndCapture("herdr", ["pane", "close", paneId]);
-        await cleanupRunDir();
+        if (!params.background) await cleanupRunDir();
       };
       if (signal) {
         if (signal.aborted) await abort();
@@ -761,7 +818,9 @@ echo "Agent process exited with code $code."
               exitCode !== 0 ||
               result.stopReason === "error" ||
               Boolean(result.errorMessage);
-            if (tabId && keepTabOpen) {
+            if (params.background && tabId) {
+              await spawnAndCapture("herdr", ["tab", "close", tabId]);
+            } else if (tabId && keepTabOpen) {
               await spawnAndCapture("herdr", [
                 "tab",
                 "rename",
@@ -773,7 +832,7 @@ echo "Agent process exited with code $code."
             } else if (tabId) {
               await spawnAndCapture("herdr", ["tab", "close", tabId]);
             }
-            if (!keepTabOpen) await cleanupRunDir();
+            if (!keepTabOpen && !params.background) await cleanupRunDir();
             return exitCode;
           } catch {
             await new Promise((resolve) => setTimeout(resolve, 250));
@@ -786,8 +845,9 @@ echo "Agent process exited with code $code."
       }
     };
 
-    const exitCode =
-      process.env.HERDR_ENV === "1" ? await runHerdr() : await runNative();
+    const exitCode = process.env.HERDR_ENV === "1"
+      ? await runHerdr()
+      : await runNative();
 
     result.exitCode = exitCode;
     if (wasAborted) throw new Error("Agent was aborted");
@@ -857,6 +917,253 @@ const AgentParams = Type.Object({
 // ─── extension ────────────────────────────────────────────────────────────────
 
 export default function (pi: ExtensionAPI) {
+  const registry = new BackgroundRegistry();
+  let activeOwner: string | undefined;
+  let activeContext: any;
+  const pendingResults = new Map<string, string>();
+  const sessionId = (ctx: any) => ctx.sessionManager.getSessionId();
+  const flushResults = (owner: string) => {
+    if (activeOwner !== owner) return;
+    for (const [id, text] of pendingResults) {
+      const job = registry.get(owner, id);
+      if (!job || !registry.claimDelivery(id)) {
+        pendingResults.delete(id);
+        continue;
+      }
+      try {
+        pi.sendUserMessage(text, { deliverAs: "followUp" });
+        pendingResults.delete(id);
+      } catch {
+        registry.releaseDelivery(id);
+      }
+    }
+  };
+  const persist = (ctx: any) => {
+    try {
+      pi.appendEntry("agent_background", { jobs: registry.snapshot(sessionId(ctx)) });
+    } catch {
+      // The session may already be shutting down.
+    }
+  };
+  pi.on("session_start", async (_event, ctx) => {
+    const owner = sessionId(ctx);
+    activeOwner = owner;
+    activeContext = ctx;
+    for (const entry of ctx.sessionManager.getBranch()) {
+      if (entry.type === "custom" && entry.customType === "agent_background") {
+        registry.restore(owner, (entry as any).data?.jobs ?? []);
+      }
+    }
+    for (const job of registry.list(owner)) {
+      if (job.status !== "running" && !job.consumed && !job.delivered) {
+        const output = job.result ? getFinalOutput(job.result.messages) : "(agent process ended before a result was recorded)";
+        pendingResults.set(job.id, `Background agent ${job.id} ${job.status}: ${output || "(no output)"}`);
+      }
+    }
+    if (ctx.isIdle?.()) flushResults(owner);
+  });
+  pi.on("agent_settled", async (_event, ctx) => flushResults(sessionId(ctx)));
+  pi.on("session_shutdown", async (_event, ctx) => {
+    const owner = sessionId(ctx);
+    await registry.cancelOwner(owner);
+    persist(ctx);
+    for (const job of registry.list(owner)) pendingResults.delete(job.id);
+    if (activeOwner === owner) {
+      activeOwner = undefined;
+      activeContext = undefined;
+    }
+  });
+
+  const launch = (job: BackgroundJob, ctx: any) => {
+    const sessionDir = ctx.sessionManager.getSessionDir?.();
+    const runDir = job.runDir ?? (sessionDir
+      ? path.join(sessionDir, "background-agents", job.id)
+      : path.join(os.tmpdir(), `pi-agent-background-${job.id}`));
+    const childSessionId = job.childSessionId ?? `agent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    job.runDir = runDir;
+    job.childSessionId = childSessionId;
+    persist(ctx);
+    job.runner = fs.promises.mkdir(runDir, { recursive: true })
+      .then(() => runAgent(job.cwd || ctx.cwd, {
+        prompt: job.prompt,
+        background: true,
+        runDir,
+        childSessionId,
+        onHerdrCreated: (tabId, paneId, session) => {
+          job.tabId = tabId;
+          job.paneId = paneId;
+          job.childSessionId = session;
+          persist(ctx);
+        },
+      }, job.controller.signal, (partial) => {
+        const result = partial.details?.result;
+        if (result) job.result = result;
+      }))
+      .then((result) => {
+        job.tabId = undefined;
+        job.paneId = undefined;
+        registry.settle(job.id,
+          job.controller.signal.aborted ? "cancelled" : result.exitCode === 0 && result.stopReason !== "error" ? "completed" : "failed",
+          result,
+        );
+        pendingResults.set(job.id, `Background agent ${job.id} ${job.status}: ${getFinalOutput(result.messages) || "(no output)"}`);
+        if (activeContext?.isIdle?.()) flushResults(job.sessionId);
+        persist(ctx);
+      }, () => {
+        registry.settle(job.id, job.controller.signal.aborted ? "cancelled" : "failed");
+        pendingResults.set(job.id, `Background agent ${job.id} ${job.status}.`);
+        if (activeContext?.isIdle?.()) flushResults(job.sessionId);
+        persist(ctx);
+      });
+  };
+
+  const foregroundJob = async (job: BackgroundJob, ctx: any): Promise<boolean> => {
+    if (process.env.HERDR_ENV !== "1") return false;
+    if (job.status === "running" && job.tabId) {
+      const focused = await spawnAndCapture("herdr", ["tab", "focus", job.tabId], { env: process.env });
+      return focused.exitCode === 0;
+    }
+    if (!job.runDir || !job.childSessionId) return false;
+    const created = await spawnAndCapture("herdr", [
+      "tab", "create", "--cwd", job.cwd || ctx.cwd,
+      "--label", `agent ${job.id}`,
+      "--focus", "--env", "PI_SUBAGENT=1",
+      ...(process.env.HERDR_WORKSPACE_ID ? ["--workspace", process.env.HERDR_WORKSPACE_ID] : []),
+    ], { env: process.env });
+    if (created.exitCode !== 0) return false;
+    let tabId: string | undefined;
+    let paneId: string | undefined;
+    try {
+      const payload = JSON.parse(created.stdout);
+      tabId = payload?.result?.tab?.tab_id;
+      paneId = payload?.result?.root_pane?.pane_id;
+    } catch {
+      return false;
+    }
+    if (!tabId || !paneId) {
+      if (tabId) await spawnAndCapture("herdr", ["tab", "close", tabId], { env: process.env });
+      return false;
+    }
+    const args = ["--session-dir", job.runDir, "--session-id", job.childSessionId, ...inheritedResourceFlags];
+    const invocation = getPiInvocation(args);
+    const commandLine = [invocation.command, ...invocation.args].map(shellQuote).join(" ");
+    const started = await spawnAndCapture("herdr", ["pane", "run", paneId, commandLine], { env: process.env });
+    if (started.exitCode !== 0) {
+      await spawnAndCapture("herdr", ["tab", "close", tabId], { env: process.env });
+      return false;
+    }
+    job.tabId = tabId;
+    job.paneId = paneId;
+    persist(ctx);
+    return true;
+  };
+
+  pi.registerCommand("agents", {
+    description: "List and foreground background pi agents",
+    handler: async (args, ctx) => {
+      const jobs = registry.list(sessionId(ctx));
+      const requestedId = args.trim();
+      const target = requestedId ? registry.get(sessionId(ctx), requestedId) : jobs.find((job) => job.status === "running" && job.tabId);
+      if (target && await foregroundJob(target, ctx)) return;
+      const text = target
+        ? `${target.id}: ${target.status}\n${target.result ? getFinalOutput(target.result.messages) : "(no output yet)"}`
+        : jobs.map((job) => `${job.id}: ${job.status}`).join("\n") || "No background agents.";
+      if (ctx.hasUI) ctx.ui.notify(text, "info");
+    },
+  });
+
+  const BackgroundParams = Type.Object({
+    action: Type.Union([
+      Type.Literal("spawn"), Type.Literal("restart"), Type.Literal("foreground"),
+      Type.Literal("wait"), Type.Literal("cancel"), Type.Literal("check"), Type.Literal("list"),
+    ]),
+    id: Type.Optional(Type.String()),
+    ids: Type.Optional(Type.Array(Type.String(), { maxItems: 64 })),
+    prompt: Type.Optional(Type.String()),
+  });
+  pi.registerTool({
+    name: "agent_background",
+    label: "Background agents",
+    description: "Spawn and manage background pi agents. Use spawn, then wait/check/list/cancel. Restart reruns in the same saved pi session; foreground focuses its Herdr tab when running.",
+    parameters: BackgroundParams,
+    async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+      const owner = sessionId(ctx);
+      const owned = registry.list(owner);
+      const textResult = (text: string, isError = false) => ({
+        content: [{ type: "text" as const, text }],
+        details: undefined,
+        ...(isError ? { isError: true } : {}),
+      });
+      if (params.action === "spawn") {
+        if (!params.prompt?.trim()) return textResult("spawn requires prompt", true);
+        const jobs = registry.list(owner);
+        if (jobs.length >= 64) {
+          const oldestSettled = jobs.find((entry) => entry.status !== "running");
+          if (oldestSettled?.runDir) await fs.promises.rm(oldestSettled.runDir, { recursive: true, force: true });
+        }
+        const job = registry.create(owner, params.prompt, ctx.cwd);
+        if (!job) return textResult("Maximum of 8 running background agents reached.", true);
+        launch(job, ctx);
+        return textResult(`Started background agent ${job.id}`);
+      }
+
+      if (params.action === "list") {
+        return textResult(owned.map((item) => `${item.id}: ${item.status}`).join("\n") || "No background agents.");
+      }
+      const requestedIds = [...new Set(params.ids ?? (params.id ? [params.id] : []))];
+      if (params.action === "wait" || params.action === "cancel") {
+        if (requestedIds.length === 0) return textResult(`${params.action} requires id or ids.`, true);
+        const jobs = requestedIds.map((id) => registry.get(owner, id));
+        if (jobs.some((job) => !job)) return textResult("One or more background agents were not found in this session.", true);
+        const targets = jobs as BackgroundJob[];
+        if (params.action === "wait") {
+          await Promise.all(targets.map((job) => waitForBackgroundJob(job, signal)));
+          for (const job of targets) {
+            registry.consume(job.id);
+            pendingResults.delete(job.id);
+          }
+          persist(ctx);
+        } else {
+          const reports: string[] = [];
+          await Promise.all(targets.map(async (job) => {
+            const wasRunning = job.status === "running";
+            registry.consume(job.id);
+            pendingResults.delete(job.id);
+            if (wasRunning) {
+              await registry.cancel(job, async () => {
+                if (job.tabId && process.env.HERDR_ENV === "1") {
+                  await spawnAndCapture("herdr", ["tab", "close", job.tabId], { env: process.env });
+                }
+              });
+            }
+            reports.push(wasRunning ? `Cancelled ${job.id}` : `${job.id} was already ${job.status}.`);
+          }));
+          persist(ctx);
+          return textResult(reports.join("\n"));
+        }
+        return textResult(targets.map((job) => `${job.id}: ${job.status}\n${job.result ? getFinalOutput(job.result.messages) : "(no output)"}`).join("\n\n---\n\n"));
+      }
+      const job = params.id ? registry.get(owner, params.id) : undefined;
+      if (!job) return textResult("This action requires a valid background agent id.", true);
+      if (params.action === "restart") {
+        if (!params.prompt?.trim()) return textResult("restart requires a prompt", true);
+        const restarted = registry.restart(owner, job!.id, params.prompt);
+        if (!restarted) return textResult("Agent cannot be restarted (it may still be running, have no saved session, or the running limit is reached).", true);
+        launch(restarted, ctx);
+        return textResult(`Restarted ${restarted.id} in its saved pi session.`);
+      }
+      if (params.action === "foreground") {
+        if (await foregroundJob(job!, ctx)) return textResult(`Foregrounded ${job!.id}.`);
+        const output = job!.result ? getFinalOutput(job!.result.messages) : "(no output yet)";
+        const text = `${job!.id}: ${job!.status}\n${output}`;
+        if (ctx.hasUI) ctx.ui.notify(text, "info");
+        return textResult(text);
+      }
+      const output = job.result ? getFinalOutput(job.result.messages) : "(no output yet)";
+      return textResult(`${job.id}: ${job.status}\n${output}`);
+    },
+  });
+
   pi.registerTool({
     name: "agent",
     label: "Agent",

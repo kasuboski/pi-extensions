@@ -1,9 +1,10 @@
-import { expect, test } from "bun:test";
+import { test } from "node:test";
+import { expect } from "./test-assertions.ts";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
 import type { ReadableSpan, SpanExporter } from "@opentelemetry/sdk-trace-base";
-import type { TelemetryConfig } from "./config";
-import { TelemetryRuntime } from "./lifecycle";
-import { TelemetryTracing } from "./tracing";
+import type { TelemetryConfig } from "./config.ts";
+import { TelemetryRuntime } from "./lifecycle.ts";
+import { TelemetryTracing } from "./tracing.ts";
 
 class MemoryExporter implements SpanExporter {
   spans: ReadableSpan[] = [];

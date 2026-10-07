@@ -1,6 +1,7 @@
-import { expect, test } from "bun:test";
+import { test } from "node:test";
+import { expect } from "./test-assertions.ts";
 import type { ReadableSpan, SpanExporter } from "@opentelemetry/sdk-trace-base";
-import { BoundedExporter, TelemetryTracing } from "./tracing";
+import { BoundedExporter, TelemetryTracing } from "./tracing.ts";
 
 const config = {
   endpoint: "http://localhost:4318/v1/traces", headers: {}, serviceName: "test", sampleRatio: 1,

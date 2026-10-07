@@ -1,11 +1,15 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, test } from "node:test";
+import { expect } from "../test-assertions.ts";
 import * as http from "node:http";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
 
 type WireRequest = { headers: http.IncomingHttpHeaders; body: any };
 type OtlpSpan = {
@@ -101,7 +105,7 @@ async function makeSession(
   captureRegistry?: (registry: any) => void,
   compaction: { enabled: boolean; reserveTokens?: number; keepRecentTokens?: number } = { enabled: false },
 ) {
-  const telemetryEntry = path.resolve(import.meta.dir, "../index.ts");
+  const telemetryEntry = path.resolve(currentDir, "../index.ts");
   const modelRuntime = await ModelRuntime.create({
     authPath: path.join(agentDir, "auth.json"),
     modelsPath: null,

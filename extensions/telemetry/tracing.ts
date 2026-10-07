@@ -16,7 +16,7 @@ import { W3CBaggagePropagator, W3CTraceContextPropagator } from "@opentelemetry/
 import { resourceFromAttributes } from "@opentelemetry/resources";
 import { BasicTracerProvider, BatchSpanProcessor, ParentBasedSampler, TraceIdRatioBasedSampler, type SpanExporter } from "@opentelemetry/sdk-trace-base";
 import { JsonTraceSerializer } from "@opentelemetry/otlp-transformer";
-import type { TelemetryConfig } from "./config";
+import type { TelemetryConfig } from "./config.ts";
 
 const MAX_SESSION_ID_LENGTH = 4096;
 const MAX_TOOL_NAME_LENGTH = 128;

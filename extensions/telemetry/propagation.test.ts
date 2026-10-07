@@ -1,10 +1,11 @@
-import { expect, test } from "bun:test";
+import { test } from "node:test";
+import { expect } from "./test-assertions.ts";
 import { propagation, ROOT_CONTEXT, trace, createTraceState } from "@opentelemetry/api";
 import type { SpanExporter } from "@opentelemetry/sdk-trace-base";
 import { W3CBaggagePropagator, W3CTraceContextPropagator } from "@opentelemetry/core";
-import type { TelemetryConfig } from "./config";
-import { TelemetryRuntime } from "./lifecycle";
-import { TelemetryTracing } from "./tracing";
+import type { TelemetryConfig } from "./config.ts";
+import { TelemetryRuntime } from "./lifecycle.ts";
+import { TelemetryTracing } from "./tracing.ts";
 
 const config: TelemetryConfig = {
   endpoint: "http://localhost:4318/v1/traces", headers: {}, serviceName: "test", sampleRatio: 1,

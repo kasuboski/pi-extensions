@@ -50,14 +50,15 @@ mise exec node@24.20.0 -- npm ci --ignore-scripts
 mise exec -- ./dev.sh --ext telemetry
 ```
 
-The extension has its own Bun toolchain and package. From `extensions/telemetry`:
+The extension uses Node 24's built-in TypeScript support and test runner (`node:test`; `--experimental-strip-types` and `--experimental-transform-types`). From `extensions/telemetry`:
 
 ```sh
 mise exec node@24.20.0 -- npm ci --ignore-scripts
-mise exec -- bun run typecheck
+mise exec node@24.20.0 -- npm test
+mise exec node@24.20.0 -- npm run typecheck
 ```
 
-Tested host: Pi 1.0.2, Bun 1.3.11, Node 24.20.0 (root-only extension loading). `dev.sh` fetches unpinned latest Pi; the latest-launcher smoke test currently fails inside bundled Undici under Bun 1.3.11, before extension loading. The pinned SDK integration suite does not use that launcher.
+Tested host: Pi 1.0.2 and Node 24.20.0. `dev.sh` fetches unpinned latest Pi; the latest-launcher smoke test currently fails inside bundled Undici before extension loading. The pinned SDK integration suite does not use that launcher.
 
 Local integration coverage includes real SDK Chat Completions, nested tools, idle manual compaction, HTTP/OTLP JSON, and direct-registry bypass. Aperture's two load orders, Responses/native adapters, live warming/overflow/retry, full reload/fork/resume integration and production proxy/Latitude accounting remain unverified.
 

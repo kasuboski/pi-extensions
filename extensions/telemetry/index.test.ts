@@ -1,7 +1,8 @@
-import { expect, test } from "bun:test";
+import { test } from "node:test";
+import { expect } from "./test-assertions.ts";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { registerTelemetry } from "./index";
-import type { TelemetryConfig } from "./config";
+import { registerTelemetry } from "./index.ts";
+import type { TelemetryConfig } from "./config.ts";
 
 const config: TelemetryConfig = {
   endpoint: "http://localhost:4318/v1/traces", headers: {}, serviceName: "test", sampleRatio: 1,

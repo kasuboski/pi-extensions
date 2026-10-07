@@ -1,6 +1,6 @@
 import { ROOT_CONTEXT, type Context, type Span } from "@opentelemetry/api";
-import type { TelemetryConfig } from "./config";
-import { MAX_TOOL_NAME_LENGTH, TelemetryTracing, type SafeOutcome } from "./tracing";
+import type { TelemetryConfig } from "./config.ts";
+import { MAX_TOOL_NAME_LENGTH, TelemetryTracing, type SafeOutcome } from "./tracing.ts";
 import type { SpanExporter } from "@opentelemetry/sdk-trace-base";
 
 const MAX_OPEN_TOOLS = 2048;

@@ -1,12 +1,14 @@
-// Run via collector.integration.sh, NOT bun test. Only the model endpoint is a fixture.
+// Run via collector.integration.sh, NOT the automated node:test suite. Only the model endpoint is a fixture.
 import assert from "node:assert/strict";
 import * as http from "node:http";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+const currentDir = path.dirname(fileURLToPath(import.meta.url));
 const [endpoint, evidenceFile, reportFile] = process.argv.slice(2);
 assert(endpoint && evidenceFile && reportFile, "Use collector.integration.sh");
 // Prevent inherited destinations, auth, sampling, or user configuration from affecting this run.
@@ -54,7 +56,7 @@ async function eventually(check: () => Promise<boolean>, description: string) {
   const deadline = Date.now() + 10000;
   while (Date.now() < deadline) {
     if (await check()) return;
-    await Bun.sleep(50);
+    await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error(description);
 }
@@ -74,7 +76,7 @@ async function runSession(protocol?: string) {
   runtime.registerProvider("openai", { baseUrl: `http://127.0.0.1:${address.port}/v1`, apiKey: modelKey });
   const base = runtime.getModel("openai", modelName);
   assert(base);
-  const loader = new DefaultResourceLoader({ cwd, agentDir, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, additionalExtensionPaths: [path.resolve(import.meta.dir, "../index.ts")] });
+  const loader = new DefaultResourceLoader({ cwd, agentDir, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, additionalExtensionPaths: [path.resolve(currentDir, "../index.ts")] });
   await loader.reload();
   const { session } = await createAgentSession({
     cwd, agentDir, modelRuntime: runtime, model: { ...base, api: "openai-completions" }, thinkingLevel: "off", resourceLoader: loader,
@@ -115,7 +117,7 @@ try {
   const sessionId = await runSession();
   assert.equal(requests.length, 2);
   await eventually(async () => spansOf(await readEvidence()).length >= 3, "Real Collector file exporter did not write SDK spans");
-  await Bun.sleep(1500); // also catch duplicates from scheduled batch export
+  await new Promise((resolve) => setTimeout(resolve, 1500)); // also catch duplicates from scheduled batch export
   const payloads = await readEvidence();
   const spans = spansOf(payloads);
   assert.equal(spans.length, 3, "Expected exactly one interaction plus two nested tool spans");
@@ -158,9 +160,9 @@ try {
     assert.equal(request.traceparent, undefined);
     assert.equal(request.baggage, undefined);
   }
-  await Bun.sleep(1500);
+  await new Promise((resolve) => setTimeout(resolve, 1500));
   assert.equal(spansOf(await readEvidence()).length, 3, "Unsupported protocol must not export to Collector");
-  const report = { collector: "otelcol-contrib 0.123.0", sdk: "1.0.2", bun: Bun.version, auth: "none on OTLP receiver", sessionId, disabledSessionId, modelRequests: requests.length, spanCount: spans.length, spans: spans.map((s) => ({ name: s.name, traceId: s.traceId, spanId: s.spanId, parentSpanId: s.parentSpanId ?? null, attributes: attrs(s.attributes) })), checks: ["file exporter decoded OTLP HTTP JSON", "exact counts and unique span IDs", "nested parent IDs", "provider traceparent and both baggage identities", "session attributes", "resource/scope allowlist", "content/credential/path/model privacy canaries", "grpc disabled without impacting SDK tools"] };
+  const report = { collector: "otelcol-contrib 0.123.0", sdk: "1.0.2", node: process.version, auth: "none on OTLP receiver", sessionId, disabledSessionId, modelRequests: requests.length, spanCount: spans.length, spans: spans.map((s) => ({ name: s.name, traceId: s.traceId, spanId: s.spanId, parentSpanId: s.parentSpanId ?? null, attributes: attrs(s.attributes) })), checks: ["file exporter decoded OTLP HTTP JSON", "exact counts and unique span IDs", "nested parent IDs", "provider traceparent and both baggage identities", "session attributes", "resource/scope allowlist", "content/credential/path/model privacy canaries", "grpc disabled without impacting SDK tools"] };
   await fs.writeFile(reportFile, JSON.stringify(report, null, 2) + "\n");
   console.log(JSON.stringify(report, null, 2));
 } finally {

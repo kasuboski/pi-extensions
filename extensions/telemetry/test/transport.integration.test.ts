@@ -1,9 +1,10 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, test } from "node:test";
+import { expect } from "../test-assertions.ts";
 import * as http from "node:http";
 import * as net from "node:net";
-import { TelemetryRuntime } from "../lifecycle";
-import { TelemetryTracing } from "../tracing";
-import type { TelemetryConfig } from "../config";
+import { TelemetryRuntime } from "../lifecycle.ts";
+import { TelemetryTracing } from "../tracing.ts";
+import type { TelemetryConfig } from "../config.ts";
 
 const servers: http.Server[] = [];
 
@@ -104,8 +105,8 @@ test("real OTLP HTTP transport delivers the next batch after a stalled request t
 test("real OTLP HTTP transport times out a stalled endpoint with sanitized diagnostics", async () => {
   let received = 0;
   let closed = 0;
-  // A raw TCP fixture observes actual socket cleanup rather than relying on
-  // Bun's HTTP-server compatibility layer to emit response close events.
+  // A raw TCP fixture observes actual socket cleanup without relying on
+  // higher-level HTTP server response-close semantics.
   const sockets = new Set<net.Socket>();
   const server = net.createServer((socket) => {
     sockets.add(socket);

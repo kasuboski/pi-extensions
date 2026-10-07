@@ -1,10 +1,11 @@
-import { afterEach, expect, test } from "bun:test";
+import assert from "node:assert/strict";
+import { afterEach, it } from "node:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { type AgentResult, updateAgentResult } from "./index";
-import lifecycleExtension, { hasAgentSettled } from "./lifecycle";
+import { type AgentResult, updateAgentResult } from "./index.ts";
+import lifecycleExtension, { hasAgentSettled } from "./lifecycle.ts";
 
 const originalSettledFile = process.env.PI_AGENT_SETTLED_FILE;
 const originalSettledSessionId = process.env.PI_AGENT_SETTLED_SESSION_ID;
@@ -14,18 +15,15 @@ afterEach(async () => {
   if (originalSettledFile === undefined) delete process.env.PI_AGENT_SETTLED_FILE;
   else process.env.PI_AGENT_SETTLED_FILE = originalSettledFile;
 
-  if (originalSettledSessionId === undefined)
-    delete process.env.PI_AGENT_SETTLED_SESSION_ID;
+  if (originalSettledSessionId === undefined) delete process.env.PI_AGENT_SETTLED_SESSION_ID;
   else process.env.PI_AGENT_SETTLED_SESSION_ID = originalSettledSessionId;
 
-  await Promise.all(
-    tempDirs.splice(0).map((dir) =>
-      fs.promises.rm(dir, { recursive: true, force: true }),
-    ),
-  );
+  await Promise.all(tempDirs.splice(0).map((dir) =>
+    fs.promises.rm(dir, { recursive: true, force: true }),
+  ));
 });
 
-test("clears a transient model error after a successful retry", () => {
+it("clears a transient model error after a successful retry", () => {
   const result: AgentResult = {
     exitCode: 0,
     messages: [],
@@ -53,15 +51,13 @@ test("clears a transient model error after a successful retry", () => {
     stopReason: "stop",
   } as any);
 
-  expect(result.stopReason).toBe("stop");
-  expect(result.errorMessage).toBeUndefined();
-  expect(result.messages).toHaveLength(2);
+  assert.equal(result.stopReason, "stop");
+  assert.equal(result.errorMessage, undefined);
+  assert.equal(result.messages.length, 2);
 });
 
-test("signals the herdr parent only when its direct child fully settles", async () => {
-  const tempDir = await fs.promises.mkdtemp(
-    path.join(os.tmpdir(), "pi-agent-test-"),
-  );
+it("signals the herdr parent only when its direct child fully settles", async () => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "pi-agent-test-"));
   tempDirs.push(tempDir);
   const settledFile = path.join(tempDir, "agent-settled");
   process.env.PI_AGENT_SETTLED_FILE = settledFile;
@@ -77,18 +73,14 @@ test("signals the herdr parent only when its direct child fully settles", async 
 
   lifecycleExtension(pi);
 
-  expect(await hasAgentSettled(settledFile)).toBe(false);
+  assert.equal(await hasAgentSettled(settledFile), false);
   const onSettled = handlers.get("agent_settled");
-  expect(onSettled).toBeDefined();
+  assert.ok(onSettled);
 
-  await onSettled?.({}, {
-    sessionManager: { getSessionId: () => "nested-child" },
-  });
-  expect(await hasAgentSettled(settledFile)).toBe(false);
+  await onSettled?.({}, { sessionManager: { getSessionId: () => "nested-child" } });
+  assert.equal(await hasAgentSettled(settledFile), false);
 
-  await onSettled?.({}, {
-    sessionManager: { getSessionId: () => "direct-child" },
-  });
-  expect(await hasAgentSettled(settledFile)).toBe(true);
-  expect(await fs.promises.readFile(settledFile, "utf8")).toBe("settled\n");
+  await onSettled?.({}, { sessionManager: { getSessionId: () => "direct-child" } });
+  assert.equal(await hasAgentSettled(settledFile), true);
+  assert.equal(await fs.promises.readFile(settledFile, "utf8"), "settled\n");
 });

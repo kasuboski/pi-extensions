@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Opt-in real Collector test; not part of bun test. No credentials required.
+# Opt-in real Collector test; not part of the automated node:test suite. No credentials required.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 image='otel/opentelemetry-collector-contrib:0.123.0@sha256:e39311df1f3d941923c00da79ac7ba6269124a870ee87e3c3ad24d60f8aee4d2'
@@ -28,8 +28,8 @@ cid=$(docker run -d --user "$(id -u):$(id -g)" \
   -v "$work:/evidence" "$image" --config=/etc/otelcol-contrib/config.yaml)
 port=$(docker port "$cid" 4318/tcp | awk -F: '{print $NF}')
 printf 'Collector OTLP HTTP: http://127.0.0.1:%s/v1/traces\n' "$port"
-# Bun script polls the real receiver before running the SDK (no readiness spans).
-mise exec -- bun run test/collector.integration.ts "http://127.0.0.1:$port/v1/traces" "$work/traces.jsonl" "$work/report.json"
+# Node script polls the real receiver before running the SDK (no readiness spans).
+mise exec node@24.20.0 -- node --experimental-strip-types --experimental-transform-types test/collector.integration.ts "http://127.0.0.1:$port/v1/traces" "$work/traces.jsonl" "$work/report.json"
 docker logs "$cid" >"$work/collector.log" 2>&1
 if rg -i '"level":"error"|Exporting failed|failed to export' "$work/collector.log"; then
   echo 'Collector reported an error' >&2

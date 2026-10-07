@@ -15,12 +15,12 @@ scripts/install-extensions
 
 Run `./dev.sh` from this repo to launch Pi with the local extensions and skills. For one extension, use `./dev.sh --ext telemetry`. Use `/reload` to pick up changes without restarting.
 
-For telemetry development, install root runtime dependencies with `mise exec node@24.20.0 -- npm ci --ignore-scripts`, then install its pinned development dependencies and run checks:
+For telemetry development, use Node 24.20.0. Install root runtime dependencies with `mise exec node@24.20.0 -- npm ci --ignore-scripts`, then install its pinned development dependencies and run checks:
 
 ```bash
 cd extensions/telemetry
 mise exec node@24.20.0 -- npm ci --ignore-scripts
-mise exec -- bun run typecheck
+mise exec node@24.20.0 -- npm run typecheck
 ```
 
 ## Structure
@@ -38,7 +38,7 @@ skills/
 
 ## Telemetry Extension
 
-Opt in with `<agent-dir>/extensions/telemetry.json` containing a collector `endpoint`. No enable flag or credentials are required for a trusted HTTP collector. See [telemetry configuration, privacy and coverage](extensions/telemetry/README.md). Tested against Pi 1.0.2; the unpinned Bun `dev.sh` launcher currently has an upstream Undici startup failure, documented there.
+Opt in with `<agent-dir>/extensions/telemetry.json` containing a collector `endpoint`. No enable flag or credentials are required for a trusted HTTP collector. See [telemetry configuration, privacy and coverage](extensions/telemetry/README.md). Tested against Pi 1.0.2; the unpinned latest-Pi launcher currently has an upstream Undici startup failure, documented there.
 
 ## MorphLLM Extension
 

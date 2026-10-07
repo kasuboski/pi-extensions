@@ -1,8 +1,9 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, test } from "node:test";
+import { expect } from "./test-assertions.ts";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { loadConfig } from "./config";
+import { loadConfig } from "./config.ts";
 
 const dirs: string[] = [];
 
