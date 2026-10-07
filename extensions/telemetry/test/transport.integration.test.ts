@@ -54,7 +54,7 @@ test("real OTLP HTTP transport tolerates an endpoint rejection without leaking r
     const chunks: Buffer[] = [];
     for await (const chunk of request) chunks.push(Buffer.from(chunk));
     expect(request.headers["x-export-test"]).toBe("private-canary");
-    expect(Buffer.concat(chunks).toString("utf8")).toContain("pi.interaction");
+    expect(Buffer.concat(chunks).toString("utf8")).toContain("invoke_agent pi");
     rejected++;
     response.writeHead(503, { "content-type": "text/plain" });
     response.end("rejection detail must not escape");
@@ -82,20 +82,20 @@ test("real OTLP HTTP transport delivers the next batch after a stalled request t
   const warnings: string[] = [];
   const tracing = new TelemetryTracing(config(receiver.url, 100), "recovery-session", undefined, (message) => warnings.push(message));
   try {
-    const first = tracing.startSpan("pi.interaction").span;
+    const first = tracing.startSpan("invoke_agent").span;
     tracing.end(first, "completed");
     await expect(tracing.provider.forceFlush()).rejects.toBeDefined();
     expect(payloads).toHaveLength(1);
     expect(warnings).toEqual(["telemetry export failed (details omitted)"]);
 
-    const next = tracing.startSpan("pi.interaction").span;
+    const next = tracing.startSpan("invoke_agent").span;
     tracing.end(next, "completed");
     await tracing.provider.forceFlush();
     expect(payloads).toHaveLength(2);
     const delivered = JSON.parse(payloads[1]).resourceSpans[0].scopeSpans[0].spans;
     expect(delivered).toHaveLength(1);
     expect(delivered[0].spanId).toBe(next.spanContext().spanId);
-    expect(delivered[0].name).toBe("pi.interaction");
+    expect(delivered[0].name).toBe("invoke_agent pi");
     expect(warnings).toHaveLength(1);
   } finally {
     await tracing.shutdown();

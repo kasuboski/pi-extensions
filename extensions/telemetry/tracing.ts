@@ -167,7 +167,7 @@ export class TelemetryTracing {
         exportTimeoutMillis: timeoutMs * 9 + 100,
       })],
       spanLimits: {
-        attributeCountLimit: 8,
+        attributeCountLimit: 10,
         attributeValueLengthLimit: MAX_ATTRIBUTE_VALUE_LENGTH,
         eventCountLimit: 0,
         linkCountLimit: 0,
@@ -178,15 +178,23 @@ export class TelemetryTracing {
 
   }
 
-  startSpan(name: "pi.interaction" | "pi.tool" | "pi.tool_scope" | "pi.provider_dispatch", parent: Context = ROOT_CONTEXT, attributes: Record<string, string | number | boolean> = {}): { span: Span; context: Context } {
+  startSpan(operation: "invoke_agent" | "execute_tool" | "pi.tool_scope" | "pi.provider_dispatch", parent: Context = ROOT_CONTEXT, attributes: Record<string, string | number | boolean> = {}): { span: Span; context: Context } {
     const safeAttrs: Record<string, string | number | boolean> = {};
-    if (name === "pi.tool") {
-      const toolName = attributes["pi.tool.name"];
-      const callId = attributes["pi.tool.call_id"];
-      if (typeof toolName === "string") safeAttrs["pi.tool.name"] = toolName.slice(0, MAX_TOOL_NAME_LENGTH);
-      if (typeof callId === "string" && callId.length <= 256 && !/[\r\n\0]/.test(callId)) safeAttrs["pi.tool.call_id"] = callId;
+    let name: string = operation;
+    if (operation === "invoke_agent") {
+      safeAttrs["gen_ai.operation.name"] = operation;
+      safeAttrs["gen_ai.agent.name"] = "pi";
+      name = "invoke_agent pi";
+    } else if (operation === "execute_tool") {
+      safeAttrs["gen_ai.operation.name"] = operation;
+      const toolName = normalizeToolName(attributes["gen_ai.tool.name"]);
+      const callId = attributes["gen_ai.tool.call.id"];
+      safeAttrs["gen_ai.tool.name"] = toolName;
+      name = `execute_tool ${toolName}`;
+      if (typeof callId === "string" && callId.length <= 256 && !/[\r\n\0]/.test(callId)) safeAttrs["gen_ai.tool.call.id"] = callId;
     }
     safeAttrs["session.id"] = this.sessionId;
+    safeAttrs["gen_ai.conversation.id"] = this.sessionId;
     const span = this.tracer.startSpan(name, { kind: SpanKind.INTERNAL, attributes: safeAttrs }, parent);
     return { span, context: trace.setSpan(parent, span) };
   }
@@ -197,7 +205,10 @@ export class TelemetryTracing {
       if (outcome) {
         span.setAttribute("pi.outcome", outcome);
         if (outcome === "completed") span.setStatus({ code: SpanStatusCode.OK });
-        else if (outcome === "error") span.setStatus({ code: SpanStatusCode.ERROR, message: "Agent activity failed" });
+        else if (outcome === "error") {
+          span.setAttribute("error.type", "agent_error");
+          span.setStatus({ code: SpanStatusCode.ERROR, message: "Agent activity failed" });
+        }
       }
       span.end();
     } catch {
@@ -368,6 +379,17 @@ async function settleWithin<T>(promise: Promise<T>, timeoutMs: number): Promise<
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+function normalizeToolName(name: unknown): string {
+  if (typeof name !== "string") return "unknown";
+  let bounded = "";
+  let count = 0;
+  for (const character of name) {
+    if (count++ === MAX_TOOL_NAME_LENGTH) break;
+    bounded += character;
+  }
+  return /^[\p{L}\p{N}_.:-]+$/u.test(bounded) ? bounded : "other";
 }
 
 export { MAX_TOOL_NAME_LENGTH };

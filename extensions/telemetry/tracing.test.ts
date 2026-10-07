@@ -24,7 +24,7 @@ for (const count of [257, 800]) {
     };
     const warnings: string[] = [];
     const tracing = new TelemetryTracing(config, "session", inner, (message) => warnings.push(message));
-    for (let i = 0; i < count; i++) tracing.end(tracing.startSpan("pi.interaction").span);
+    for (let i = 0; i < count; i++) tracing.end(tracing.startSpan("invoke_agent").span);
     // Reaching 256 starts the SDK's normal scheduled batch before forceFlush.
     expect(callbacks).toHaveLength(1);
     const flushed = tracing.provider.forceFlush();
@@ -50,7 +50,7 @@ test("queued batches get transport deadlines after admission, not while waiting"
     },
     async shutdown() {},
   });
-  for (let i = 0; i < 1024; i++) tracing.end(tracing.startSpan("pi.interaction").span);
+  for (let i = 0; i < 1024; i++) tracing.end(tracing.startSpan("invoke_agent").span);
   await tracing.provider.forceFlush();
   expect(delivered).toBe(1024); // total exceeds a single transport deadline
   await tracing.shutdown();

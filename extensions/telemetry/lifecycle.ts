@@ -1,11 +1,10 @@
 import { ROOT_CONTEXT, type Context, type Span } from "@opentelemetry/api";
 import type { TelemetryConfig } from "./config.ts";
-import { MAX_TOOL_NAME_LENGTH, TelemetryTracing, type SafeOutcome } from "./tracing.ts";
+import { TelemetryTracing, type SafeOutcome } from "./tracing.ts";
 import type { SpanExporter } from "@opentelemetry/sdk-trace-base";
 
 const MAX_OPEN_TOOLS = 2048;
 const MAX_CALL_ID_LENGTH = 256;
-const SAFE_TOOL_NAME = /^[\p{L}\p{N}_.:-]+$/u;
 
 type ToolState = {
   span: Span;
@@ -37,7 +36,7 @@ export class TelemetryRuntime {
         this.interaction.runCount = Math.min(Number.MAX_SAFE_INTEGER, this.interaction.runCount + 1);
         return;
       }
-      const root = this.tracing.startSpan("pi.interaction", ROOT_CONTEXT);
+      const root = this.tracing.startSpan("invoke_agent", ROOT_CONTEXT);
       this.interaction = { ...root, lastOutcome: "unknown", runCount: 1 };
     });
   }
@@ -92,10 +91,9 @@ export class TelemetryRuntime {
           parent = scope.context;
         }
       }
-      const toolName = normalizeToolName(name);
-      const started = this.tracing.startSpan("pi.tool", parent, {
-        "pi.tool.name": toolName,
-        "pi.tool.call_id": id,
+      const started = this.tracing.startSpan("execute_tool", parent, {
+        "gen_ai.tool.name": name,
+        "gen_ai.tool.call.id": id,
       });
       this.tools.set(id, { ...started, parentToolCallId: parentId, scope });
     });
@@ -188,12 +186,6 @@ export class TelemetryRuntime {
 
 function isSafeCallId(id: string): boolean {
   return typeof id === "string" && id.length > 0 && id.length <= MAX_CALL_ID_LENGTH && !/[\r\n\0]/.test(id);
-}
-
-function normalizeToolName(name: string): string {
-  if (typeof name !== "string") return "unknown";
-  const bounded = name.slice(0, MAX_TOOL_NAME_LENGTH);
-  return SAFE_TOOL_NAME.test(bounded) ? bounded : "other";
 }
 
 function normalizeOutcome(outcome: string): SafeOutcome {

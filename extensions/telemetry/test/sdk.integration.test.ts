@@ -202,15 +202,22 @@ test("Pi 1.0.2 SDK loads telemetry index.ts and propagates interaction context t
     await eventually(() => exports, (items) => items.length > 0, "No OTLP export received from the real SDK session");
     const spans = otlpSpans(exports);
     expect(spans.length).toBeGreaterThanOrEqual(3);
-    const interactions = spans.filter((span) => span.name === "pi.interaction");
+    const interactions = spans.filter((span) => span.name === "invoke_agent pi");
     expect(interactions).toHaveLength(1);
     expect(interactions[0].traceId).toBe(wire[0].headers.traceparent!.toString().split("-")[1]);
     expect(attr(interactions[0], "session.id")?.stringValue).toBe(sessionId);
+    expect(attr(interactions[0], "gen_ai.operation.name")?.stringValue).toBe("invoke_agent");
+    expect(attr(interactions[0], "gen_ai.agent.name")?.stringValue).toBe("pi");
+    // The proxy's incoming parent is the agent span, not a fabricated local LLM span.
+    expect(wire.every((request) => request.headers.traceparent!.toString().split("-")[2] === interactions[0].spanId)).toBe(true);
+    expect(spans.every((span) => attr(span, "gen_ai.conversation.id")?.stringValue === sessionId)).toBe(true);
 
-    const toolSpans = spans.filter((span) => span.name === "pi.tool");
+    const toolSpans = spans.filter((span) => span.name.startsWith("execute_tool "));
     expect(toolSpans.length).toBeGreaterThanOrEqual(2);
-    const outer = toolSpans.find((span) => attr(span, "pi.tool.name")?.stringValue === "outer");
-    const inner = toolSpans.find((span) => attr(span, "pi.tool.name")?.stringValue === "inner");
+    expect(toolSpans.every((span) => attr(span, "gen_ai.operation.name")?.stringValue === "execute_tool")).toBe(true);
+    expect(toolSpans.every((span) => span.name === `execute_tool ${attr(span, "gen_ai.tool.name")?.stringValue}`)).toBe(true);
+    const outer = toolSpans.find((span) => attr(span, "gen_ai.tool.name")?.stringValue === "outer");
+    const inner = toolSpans.find((span) => attr(span, "gen_ai.tool.name")?.stringValue === "inner");
     expect(outer).toBeDefined();
     expect(inner).toBeDefined();
     expect(inner!.parentSpanId).toBe(outer!.spanId);
@@ -251,8 +258,8 @@ test("real SDK early stream abort exports aborted interaction rather than unknow
     await eventually(() => streaming, Boolean, "Model stream did not start");
     await session.abort();
     await prompting;
-    await eventually(() => otlpSpans(exports), (spans) => spans.some((span) => span.name === "pi.interaction"), "Abort interaction not exported");
-    const interaction = otlpSpans(exports).find((span) => span.name === "pi.interaction")!;
+    await eventually(() => otlpSpans(exports), (spans) => spans.some((span) => span.name === "invoke_agent pi"), "Abort interaction not exported");
+    const interaction = otlpSpans(exports).find((span) => span.name === "invoke_agent pi")!;
     expect(attr(interaction, "pi.outcome")?.stringValue).toBe("aborted");
     expect(interaction.status?.code ?? 0).toBe(0);
     expect(JSON.stringify(exports)).not.toContain("private-abort-content");
@@ -344,7 +351,7 @@ test("SDK provider hooks run for session prompts, while direct model-registry ca
 
     await eventually(() => exports, (items) => items.length > 0, "No OTLP dispatch span received");
     const spans = otlpSpans(exports);
-    expect(spans.filter((span) => span.name === "pi.interaction").length).toBeGreaterThanOrEqual(1);
+    expect(spans.filter((span) => span.name === "invoke_agent pi").length).toBeGreaterThanOrEqual(1);
     // Direct registry streams are a verified negative: they bypass SDK request hooks.
     expect(spans.every((span) => attr(span, "session.id")?.stringValue === session.sessionManager.getSessionId())).toBe(true);
   } finally {

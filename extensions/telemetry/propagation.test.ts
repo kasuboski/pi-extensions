@@ -69,7 +69,7 @@ test("replaces stale case-insensitive propagation headers and baggage identities
 
 test("allowlisting identity aliases cannot forward stale identities", async () => {
   const tracing = new TelemetryTracing(config, "current-session", fakeExporter);
-  const root = tracing.startSpan("pi.interaction");
+  const root = tracing.startSpan("invoke_agent");
   const headers: Record<string, string | null> = { baggage: "Session.Id=old,GEN_AI.CONVERSATION.ID=wrong,approved=ok,secret=canary" };
   tracing.inject(headers, root.context, ["Session.Id", "GEN_AI.CONVERSATION.ID", "approved"]);
   const entries = baggage(headers);
@@ -86,7 +86,7 @@ test("oversized Unicode session identities are omitted as a pair instead of trun
   // Exceeds the W3C byte limit after percent encoding while remaining under the character limit.
   const sessionId = "界".repeat(3000);
   const tracing = new TelemetryTracing(config, sessionId, fakeExporter, (message) => warnings.push(message));
-  const span = tracing.startSpan("pi.interaction");
+  const span = tracing.startSpan("invoke_agent");
   const headers: Record<string, string | null> = { baggage: "session.id=stale,keep=stale" };
   tracing.inject(headers, span.context, []);
   const value = baggage(headers);
@@ -101,7 +101,7 @@ test("oversized Unicode session identities are omitted as a pair instead of trun
 test("selected extra entries omitted by W3C limits warn without losing required identities", async () => {
   const warnings: string[] = [];
   const tracing = new TelemetryTracing(config, "session", fakeExporter, (message) => warnings.push(message));
-  const span = tracing.startSpan("pi.interaction");
+  const span = tracing.startSpan("invoke_agent");
   // Incoming baggage fits the aggregate limit, but a Unicode key's re-encoding
   // exceeds the per-entry limit on injection. Extraction preserves this key.
   const key = "界".repeat(500);
