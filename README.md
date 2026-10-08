@@ -34,6 +34,7 @@ extensions/
   telemetry/       # Privacy-conscious structural OpenTelemetry tracing
 skills/
   design-control-loop/  # Design and build scheduled agentic control loops
+  diagram-design/       # Editorial HTML/SVG diagrams (vendored Pi skill)
 ```
 
 ## Telemetry Extension
